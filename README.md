@@ -1,4 +1,4 @@
-# quizmcp-apps
+# mcp-apps-lab
 
 Personal **FastMCP app servers** (Python) — MCP tools that return interactive
 Prefab UIs (buttons, cards, progress, charts) instead of raw JSON, built with

@@ -1,5 +1,5 @@
 [project]
-name = "quizmcp-apps"
+name = "mcp-apps-lab"
 version = "0.1.0"
 description = "Personal FastMCP app servers — interactive Prefab UIs over MCP"
 readme = "README.md"
