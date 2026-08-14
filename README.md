@@ -10,7 +10,7 @@ raw JSON; any MCP host renders them, and the LLM sees a text summary.
 | App | UI tool | Backend tool | What it demonstrates |
 | --- | --- | --- | --- |
 | Quiz | `take_quiz` | `submit_answer` | Multi-turn state: the LLM generates questions, the user answers via buttons, each click grades through a backend tool, the final score is sent back to the conversation |
-| Weather | `weather_app` | `get_weather` | Dashboard with a free-text location input (no geocoding — direct lookup, unknown names fall back to Jakarta with a toast) plus preset city buttons; every lookup goes through the host's tools/call proxy (hashed tool names — the proxy never sees the mapping) |
+| Weather | `weather_app` | `get_weather` | Live forecast from the Open-Meteo API: free-text location input geocodes ANY city name (no fixed table — “bekasi” works), shows current conditions with the city's local time (🕐 20:31 WIB), region/country, and a 5-day forecast; unknown names fall back to Jakarta, sample data offline (LIVE/SAMPEL badge); lookups go through the host's tools/call proxy (hashed tool names — the proxy never sees the mapping) |
 | News Curator | `news_curator` | `get_feed` | Live RSS feeds (Bloomberg Markets, CNBC, The Guardian Business, BBC Business) fetched through the backend tool on tab click / refresh — parsed with the stdlib, sample-data fallback when offline (LIVE/SAMPLE badge); compiles a markdown briefing and sends it back to the conversation |
 
 Also exposed server-side: live resources (`news://{source}/feed`,

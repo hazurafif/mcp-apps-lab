@@ -51,12 +51,24 @@ async def test_backend_tools_via_hash() -> None:
 
 @pytest.mark.asyncio
 async def test_weather_unknown_city_falls_back() -> None:
-    """Unknown location names fall back to Jakarta with is_fallback flagged."""
+    """Unresolvable location names fall back to Jakarta with is_fallback."""
     digest = hash_tool(weather_app.name, "get_weather")
-    result = await mcp.call_tool(f"{digest}_get_weather", {"city": "london"})
+    result = await mcp.call_tool(f"{digest}_get_weather", {"city": "zzzqqqxyz"})
     data = json.loads(_text(result))
-    assert data["city"] == "jakarta"
     assert data["is_fallback"] is True
+    assert data["label"] == "Jakarta"
+
+
+@pytest.mark.asyncio
+async def test_weather_any_city_resolves_live() -> None:
+    """Real city names (e.g. bekasi) geocode against the live API."""
+    digest = hash_tool(weather_app.name, "get_weather")
+    result = await mcp.call_tool(f"{digest}_get_weather", {"city": "bekasi"})
+    data = json.loads(_text(result))
+    assert data["label"] == "Bekasi"
+    assert data["is_fallback"] is False
+    assert data["forecast"], "should include a daily forecast"
+    assert data["updated_local"], "should include the city's local time"
 
 
 @pytest.mark.asyncio
@@ -84,13 +96,15 @@ async def test_prompts() -> None:
 
 @pytest.mark.asyncio
 async def test_ui_serialization(monkeypatch) -> None:
-    """Each UI entry point renders to JSON without errors (news offline-safe)."""
+    """Each UI entry point renders to JSON without errors (offline-safe)."""
     import mcp_apps_lab.tools.news as news_tools
+    import mcp_apps_lab.tools.weather as weather_tools
 
     def _offline(*args, **kwargs):
         raise OSError("offline")
 
     monkeypatch.setattr(news_tools, "_fetch_feed", _offline)
+    monkeypatch.setattr(weather_tools, "_fetch_json", _offline)
     for ui, kwargs in [
         (take_quiz, {"topic": "Python"}),
         (weather_ui, {"city": "berlin"}),
@@ -101,20 +115,18 @@ async def test_ui_serialization(monkeypatch) -> None:
         assert isinstance(data, dict) and data["view"]
 
 
-def test_weather_ui_has_location_input() -> None:
-    """The dashboard renders a free-text location input."""
+def test_weather_ui_has_location_input_and_forecast(monkeypatch) -> None:
+    """The dashboard renders a location input and forecast slots."""
+    import mcp_apps_lab.tools.weather as weather_tools
+
+    def _offline(*args, **kwargs):
+        raise OSError("offline")
+
+    monkeypatch.setattr(weather_tools, "_fetch_json", _offline)
     data = weather_ui(city="jakarta").to_json()
-
-    def walk(node) -> bool:
-        if isinstance(node, dict):
-            if node.get("type") == "Input":
-                return True
-            return any(walk(v) for v in node.values())
-        if isinstance(node, list):
-            return any(walk(v) for v in node)
-        return False
-
-    assert walk(data), "weather UI should contain an Input component"
+    serialized = json.dumps(data)
+    assert "Input" in serialized or "\"type\": \"Input\"" in serialized
+    assert "Prakiraan 5 Hari" in serialized
 
 
 def test_news_ui_uses_fallback_when_offline(monkeypatch) -> None:
