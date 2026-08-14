@@ -1,46 +1,26 @@
-"""Weather app — a FastMCPApp example with prefab UI.
+"""Weather app — a city dashboard with button-driven city switching.
 
-The LLM calls `weather_app(city)` to launch a weather dashboard. The user
-switches cities via buttons; each button calls the `get_weather` backend
-tool through the host's tools/call proxy (the tool name is hashed server-side
-and resolved by FastMCP's `get_tool_by_hash` — the proxy never needs to know
-the mapping).
-
-Wire into ai-backend-lab with:
-
-    MCP_SERVERS_JSON='{"weather":{"url":"http://127.0.0.1:8095/mcp","transport":"streamable_http"}}'
+The LLM calls ``weather_app(city)`` to launch a weather dashboard. The user
+switches cities via buttons; each button calls the ``get_weather`` backend
+tool (from ``mcp_apps_lab.tools``) through the host's tools/call proxy (the
+tool name is hashed server-side and resolved by FastMCP's
+``get_tool_by_hash`` — the proxy never needs to know the mapping).
 """
 
 from __future__ import annotations
 
-from fastmcp import FastMCP, FastMCPApp
+from fastmcp import FastMCPApp
 from prefab_ui.actions import SetState, ShowToast
 from prefab_ui.actions.mcp import CallTool
 from prefab_ui.app import PrefabApp
 from prefab_ui.components import Badge, Button, Card, Column, Heading, Muted, Row, Text
 from prefab_ui.rx import ERROR, RESULT, Rx
 
+from mcp_apps_lab.data.weather import CITIES, get_weather_data
+from mcp_apps_lab.tools.weather import get_weather
+
 app = FastMCPApp("Weather")
-
-CITIES = ["jakarta", "tokyo", "paris", "berlin"]
-
-WEATHER: dict[str, dict] = {
-    "jakarta": {"condition": "Cerah", "temperature_c": 24, "humidity": 40, "emoji": "☀️"},
-    "tokyo": {"condition": "Berawan", "temperature_c": 18, "humidity": 65, "emoji": "☁️"},
-    "paris": {"condition": "Hujan ringan", "temperature_c": 12, "humidity": 80, "emoji": "🌧️"},
-    "berlin": {"condition": "Berkabut", "temperature_c": 8, "humidity": 85, "emoji": "🌫️"},
-}
-
-
-def _weather(city: str) -> dict:
-    return WEATHER.get(city.lower(), WEATHER["jakarta"])
-
-
-@app.tool()
-def get_weather(city: str) -> dict:
-    """Get current weather for a city (called by the dashboard buttons)."""
-    data = _weather(city)
-    return {"city": city.lower(), **data}
+app.add_tool(get_weather)
 
 
 @app.ui()
@@ -89,14 +69,6 @@ def weather_app(city: str = "jakarta") -> PrefabApp:
         view=view,
         state={
             "city": city.lower(),
-            "weather": _weather(city),
+            "weather": get_weather_data(city),
         },
     )
-
-
-mcp = FastMCP("Weather Server", providers=[app])
-
-if __name__ == "__main__":
-    # Port 8095: keeps clear of the quiz app (:8091) and the plain weather
-    # demo server (:8094).
-    mcp.run(transport="http", host="127.0.0.1", port=8095)

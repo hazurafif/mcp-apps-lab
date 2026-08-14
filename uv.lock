@@ -640,8 +640,8 @@ wheels = [
 
 [[package]]
 name = "mcp-apps-lab"
-version = "0.1.0"
-source = { virtual = "." }
+version = "0.2.0"
+source = { editable = "." }
 dependencies = [
     { name = "fastmcp", extra = ["apps"] },
 ]

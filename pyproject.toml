@@ -1,12 +1,15 @@
 [project]
 name = "mcp-apps-lab"
-version = "0.1.0"
-description = "Personal FastMCP app servers — interactive Prefab UIs over MCP"
+version = "0.2.0"
+description = "Personal FastMCP app server — interactive Prefab UIs over MCP (quiz, news, weather)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastmcp[apps]>=3.4.0",
 ]
+
+[project.scripts]
+mcp-apps-lab = "mcp_apps_lab.__main__:main"
 
 [dependency-groups]
 dev = [
@@ -15,12 +18,24 @@ dev = [
     "pytest-asyncio>=0.25.0",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_apps_lab"]
+
 [tool.uv]
-package = false  # plain scripts, no src layout
+package = true  # src layout — `uv sync` installs the package editable
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC", "RUF"]

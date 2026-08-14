@@ -1,33 +1,16 @@
-"""Quiz / trivia app — a FastMCPApp example with multi-turn state.
-
-Ported from the FastMCP upstream example (`examples/apps/quiz/quiz_server.py`)
-to demonstrate app servers in this repo's `apps/` directory.
+"""Quiz app — multi-turn trivia with button answers and a final score.
 
 How it works:
-- The LLM generates quiz questions and calls `take_quiz` to launch the UI
+- The LLM generates quiz questions and calls ``take_quiz`` to launch the UI
 - The user answers via multiple-choice buttons (no forms)
-- Each answer calls `submit_answer`, which returns correctness + updated score
+- Each answer calls ``submit_answer`` (from ``mcp_apps_lab.tools``), which
+  returns correctness + updated score
 - After the final question, a SendMessage pushes the score back to the LLM
-
-Run with the browser dev UI (`fastmcp dev apps`):
-
-    uv run fastmcp dev apps quiz/quiz_server.py --mcp-port 8091
-
-Or as a plain streamable-HTTP server (no dev UI):
-
-    uv run python quiz/quiz_server.py
-    # streamable HTTP at http://127.0.0.1:8091/mcp
-
-Wire it into the ai-backend-lab agent with:
-
-    MCP_SERVERS_JSON='{"quiz":{"url":"http://127.0.0.1:8091/mcp","transport":"streamable_http"}}'
 """
 
 from __future__ import annotations
 
-from typing import TypedDict
-
-from fastmcp import FastMCP, FastMCPApp
+from fastmcp import FastMCPApp
 from prefab_ui.actions import SetState, ShowToast
 from prefab_ui.actions.mcp import CallTool, SendMessage
 from prefab_ui.app import PrefabApp
@@ -45,79 +28,11 @@ from prefab_ui.components import (
 )
 from prefab_ui.rx import ERROR, RESULT, Rx
 
+from mcp_apps_lab.data.quiz import DEFAULT_QUESTIONS, Question
+from mcp_apps_lab.tools.quiz import submit_answer
+
 app = FastMCPApp("Quiz")
-
-
-class Question(TypedDict):
-    question: str
-    options: list[str]
-    correct: int
-
-
-DEFAULT_QUESTIONS: list[Question] = [
-    {
-        "question": "What is the capital of Australia?",
-        "options": ["Sydney", "Melbourne", "Canberra", "Perth"],
-        "correct": 2,
-    },
-    {
-        "question": "Which planet has the most moons?",
-        "options": ["Jupiter", "Saturn", "Uranus", "Neptune"],
-        "correct": 1,
-    },
-    {
-        "question": "What year did the Berlin Wall fall?",
-        "options": ["1987", "1989", "1991", "1993"],
-        "correct": 1,
-    },
-    {
-        "question": "Which element has the chemical symbol 'Au'?",
-        "options": ["Silver", "Aluminum", "Gold", "Argon"],
-        "correct": 2,
-    },
-    {
-        "question": "What is the deepest ocean?",
-        "options": ["Atlantic", "Indian", "Arctic", "Pacific"],
-        "correct": 3,
-    },
-]
-
-
-# ---------------------------------------------------------------------------
-# Backend tool — grade an answer and advance state
-# ---------------------------------------------------------------------------
-
-
-@app.tool()
-def submit_answer(
-    question_index: int,
-    selected: int,
-    correct: int,
-    total_questions: int,
-    current_score: int,
-) -> dict:
-    """Grade an answer and return the updated quiz state.
-
-    Returns a dict with:
-    - is_correct: whether the selected answer matched the correct index
-    - new_score: the updated cumulative score
-    - answered_index: the question that was just answered
-    - finished: whether this was the last question
-    """
-    is_correct = selected == correct
-    new_score = current_score + (1 if is_correct else 0)
-    finished = (question_index + 1) >= total_questions
-    return {
-        "is_correct": is_correct,
-        "new_score": new_score,
-        "answered_index": question_index,
-        "finished": finished,
-    }
-
-
-# ---------------------------------------------------------------------------
-# UI entry point — the LLM calls this with a topic and generated questions
-# ---------------------------------------------------------------------------
+app.add_tool(submit_answer)
 
 
 @app.ui()
@@ -251,12 +166,3 @@ def take_quiz(
         "finished": False,
     }
     return PrefabApp(view=view, state=initial_state)
-
-
-mcp = FastMCP("Quiz Server", providers=[app])
-
-if __name__ == "__main__":
-    # Port 8091: keeps clear of the backend app (:8000) and the weather
-    # demo test server (:8090). `fastmcp dev apps` runs it on 8000 by
-    # default — pass --mcp-port 8091 to match.
-    mcp.run(transport="http", host="127.0.0.1", port=8091)
