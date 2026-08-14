@@ -10,7 +10,7 @@ raw JSON; any MCP host renders them, and the LLM sees a text summary.
 | App | UI tool | Backend tool | What it demonstrates |
 | --- | --- | --- | --- |
 | Quiz | `take_quiz` | `submit_answer` | Multi-turn state: the LLM generates questions, the user answers via buttons, each click grades through a backend tool, the final score is sent back to the conversation |
-| Weather | `weather_app` | `get_weather` | Dashboard with a button row that swaps state by calling a backend tool through the host's tools/call proxy (hashed tool names — the proxy never sees the mapping) |
+| Weather | `weather_app` | `get_weather` | Dashboard with a free-text location input (no geocoding — direct lookup, unknown names fall back to Jakarta with a toast) plus preset city buttons; every lookup goes through the host's tools/call proxy (hashed tool names — the proxy never sees the mapping) |
 | News Curator | `news_curator` | `compile_briefing` | Curated financial feeds (Bloomberg, Reuters, The Guardian, BBC) in tabbed panels with a featured story, market-pulse metrics, and category-grouped headlines; compiles a markdown briefing and sends it back to the conversation |
 
 Also exposed server-side: resources (`news://{source}/feed`,

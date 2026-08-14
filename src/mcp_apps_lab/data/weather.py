@@ -15,3 +15,12 @@ WEATHER: dict[str, dict] = {
 def get_weather_data(city: str) -> dict:
     """Look up a city's weather; unknown cities fall back to jakarta."""
     return WEATHER.get(city.lower(), WEATHER["jakarta"])
+
+
+def resolve_city(city: str) -> str:
+    """Normalize a city name; unknown names resolve to "jakarta".
+
+    Used by the backend tool so callers know whether a fallback happened.
+    """
+    normalized = city.strip().lower()
+    return normalized if normalized in WEATHER else "jakarta"

@@ -1,10 +1,12 @@
-"""Weather app — a city dashboard with button-driven city switching.
+"""Weather app — a city dashboard with free-text location input.
 
 The LLM calls ``weather_app(city)`` to launch a weather dashboard. The user
-switches cities via buttons; each button calls the ``get_weather`` backend
-tool (from ``mcp_apps_lab.tools``) through the host's tools/call proxy (the
-tool name is hashed server-side and resolved by FastMCP's
-``get_tool_by_hash`` — the proxy never needs to know the mapping).
+can type any location into the input — names are looked up directly, no
+geocoding — or tap a preset city button. Each lookup calls the ``get_weather``
+backend tool (from ``mcp_apps_lab.tools``) through the host's tools/call
+proxy (the tool name is hashed server-side and resolved by FastMCP's
+``get_tool_by_hash`` — the proxy never needs to know the mapping). Unknown
+names fall back to Jakarta, and the toast says so.
 """
 
 from __future__ import annotations
@@ -13,7 +15,17 @@ from fastmcp import FastMCPApp
 from prefab_ui.actions import SetState, ShowToast
 from prefab_ui.actions.mcp import CallTool
 from prefab_ui.app import PrefabApp
-from prefab_ui.components import Badge, Button, Card, Column, Heading, Muted, Row, Text
+from prefab_ui.components import (
+    Badge,
+    Button,
+    Card,
+    Column,
+    Heading,
+    Input,
+    Muted,
+    Row,
+    Text,
+)
 from prefab_ui.rx import ERROR, RESULT, Rx
 
 from mcp_apps_lab.data.weather import CITIES, get_weather_data
@@ -25,12 +37,25 @@ app.add_tool(get_weather)
 
 @app.ui()
 def weather_app(city: str = "jakarta") -> PrefabApp:
-    """Launch a weather dashboard for a city.
+    """Launch a weather dashboard.
 
-    - city: lowercase city name (jakarta, tokyo, paris, berlin)
+    - city: lowercase city name to show first. Defaults to ``jakarta`` when
+      not given. The user can type any location into the input — looked up
+      directly (no geocoding); unknown names fall back to Jakarta.
     """
     city_rx = Rx("city")
     weather = Rx("weather")
+
+    def lookup_actions() -> list:
+        """Actions after a successful lookup: sync state + inform via toast."""
+        return [
+            SetState("city", RESULT.city),
+            SetState("weather", RESULT),
+            ShowToast(
+                f"Menampilkan {RESULT.city}"
+                f"{RESULT.is_fallback.then(' — lokasi tidak ditemukan, memakai Jakarta', '')}"
+            ),
+        ]
 
     with Column(gap=6, css_class="p-6 max-w-md") as view:
         Heading("Cuaca Sekarang")
@@ -47,7 +72,25 @@ def weather_app(city: str = "jakarta") -> PrefabApp:
             Muted(f"Kelembapan: {weather.humidity}%")
 
         with Column(gap=2):
-            Text("Ganti kota:", css_class="text-sm font-medium text-muted-foreground")
+            Text("Lokasi:", css_class="text-sm font-medium text-muted-foreground")
+            with Row(gap=2):
+                location = Input(
+                    placeholder="mis. jakarta, tokyo, paris...",
+                    value=city.lower(),
+                    name="location",
+                )
+                Button(
+                    "Lihat",
+                    variant="default",
+                    on_click=CallTool(
+                        get_weather,
+                        arguments={"city": str(location.rx)},
+                        on_success=lookup_actions(),
+                        on_error=ShowToast(ERROR, variant="error"),
+                    ),
+                )
+
+            Text("Cepat:", css_class="text-sm font-medium text-muted-foreground")
             with Row(gap=2, wrap=True):
                 for city in CITIES:
                     Button(
@@ -57,10 +100,7 @@ def weather_app(city: str = "jakarta") -> PrefabApp:
                         on_click=CallTool(
                             get_weather,
                             arguments={"city": city},
-                            on_success=[
-                                SetState("city", city),
-                                SetState("weather", RESULT),
-                            ],
+                            on_success=[*lookup_actions(), SetState("location", city)],
                             on_error=ShowToast(ERROR, variant="error"),
                         ),
                     )
@@ -69,6 +109,7 @@ def weather_app(city: str = "jakarta") -> PrefabApp:
         view=view,
         state={
             "city": city.lower(),
+            "location": city.lower(),
             "weather": get_weather_data(city),
         },
     )

@@ -46,6 +46,16 @@ async def test_backend_tools_via_hash() -> None:
 
 
 @pytest.mark.asyncio
+async def test_weather_unknown_city_falls_back() -> None:
+    """Unknown location names fall back to Jakarta with is_fallback flagged."""
+    digest = hash_tool(weather_app.name, "get_weather")
+    result = await mcp.call_tool(f"{digest}_get_weather", {"city": "london"})
+    data = json.loads(_text(result))
+    assert data["city"] == "jakarta"
+    assert data["is_fallback"] is True
+
+
+@pytest.mark.asyncio
 async def test_resources() -> None:
     """news:// and weather:// resources resolve through the server."""
     feed = await mcp.read_resource("news://bloomberg/feed")
@@ -79,3 +89,19 @@ async def test_ui_serialization() -> None:
         app = ui(**kwargs)
         data = app.to_json()
         assert isinstance(data, dict) and data["view"]
+
+
+def test_weather_ui_has_location_input() -> None:
+    """The dashboard renders a free-text location input."""
+    data = weather_ui(city="jakarta").to_json()
+
+    def walk(node) -> bool:
+        if isinstance(node, dict):
+            if node.get("type") == "Input":
+                return True
+            return any(walk(v) for v in node.values())
+        if isinstance(node, list):
+            return any(walk(v) for v in node)
+        return False
+
+    assert walk(data), "weather UI should contain an Input component"
