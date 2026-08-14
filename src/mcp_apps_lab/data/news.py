@@ -6,17 +6,18 @@ Swap in live RSS/API data for production use.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class Story(TypedDict):
+    source: NotRequired[str]  # feed id; required when the LLM supplies stories
     headline: str
-    summary: str
+    summary: NotRequired[str]
     category: str  # Markets | Economy | Technology | World | Business
-    sentiment: str  # positive | negative | neutral
-    minutes_ago: str  # display string, e.g. "12m ago"
-    tickers: list[str]  # market tickers (financial sources)
-    url: str  # section URL (links open in a new tab)
+    sentiment: NotRequired[str]  # positive | negative | neutral
+    minutes_ago: NotRequired[str]  # display string, e.g. "12m ago"
+    tickers: NotRequired[list[str]]  # market tickers (financial sources)
+    url: NotRequired[str]  # section URL (links open in a new tab)
 
 
 SOURCES: list[dict[str, str]] = [
@@ -236,12 +237,19 @@ SENTIMENT_VARIANTS = {
 }
 
 
-def pulse(source: str) -> dict[str, int]:
-    """Count stories per category for a source (used for the metric row)."""
+def pulse_stories(stories: list[Story]) -> dict[str, int]:
+    """Count stories per category in an arbitrary feed (built-in or LLM-made)."""
     counts = {c: 0 for c in CATEGORY_ORDER}
-    for story in STORIES.get(source, []):
-        counts[story["category"]] += 1
+    for story in stories:
+        category = story.get("category", "Business")
+        if category in counts:
+            counts[category] += 1
     return counts
+
+
+def pulse(source: str) -> dict[str, int]:
+    """Count stories per category for a built-in source feed."""
+    return pulse_stories(STORIES.get(source, []))
 
 
 def stories_by_source(source: str) -> list[Story]:

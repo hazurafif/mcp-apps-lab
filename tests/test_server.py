@@ -105,3 +105,51 @@ def test_weather_ui_has_location_input() -> None:
         return False
 
     assert walk(data), "weather UI should contain an Input component"
+
+
+def test_news_ui_with_llm_generated_stories() -> None:
+    """The LLM can pass its own feed; stories are grouped by source into tabs."""
+    stories = [
+        {
+            "source": "reuters",
+            "headline": "Copper Jumps on Supply Worries",
+            "summary": "Mines in Chile reported disruptions.",
+            "category": "Markets",
+            "sentiment": "positive",
+            "minutes_ago": "5m ago",
+            "tickers": ["HG1"],
+            "url": "https://example.com/copper",
+        },
+        {
+            "source": "reuters",
+            "headline": "Yen Weakens Past 160",
+            "summary": "BOJ watchers expect intervention.",
+            "category": "Markets",
+            "sentiment": "negative",
+            "minutes_ago": "15m ago",
+            "tickers": ["JPY="],
+        },
+    ]
+    data = news_curator(topic="Commodities", stories=stories).to_json()
+    serialized = json.dumps(data)
+    assert "Copper Jumps on Supply Worries" in serialized
+    assert "Yen Weakens Past 160" in serialized
+    assert "reuters" in serialized  # tab value
+    assert "Commodities" in serialized
+
+
+@pytest.mark.asyncio
+async def test_compile_briefing_filters_llm_stories() -> None:
+    """compile_briefing compiles only the active source when given a feed list."""
+    digest = hash_tool(news_app.name, "compile_briefing")
+    stories = [
+        {"source": "bbc", "headline": "BBC story", "category": "Business"},
+        {"source": "guardian", "headline": "Guardian story", "category": "Economy"},
+    ]
+    result = await mcp.call_tool(
+        f"{digest}_compile_briefing",
+        {"source": "guardian", "topic": "Test", "stories": stories},
+    )
+    briefing = json.loads(_text(result))["briefing"]
+    assert "Guardian story" in briefing
+    assert "BBC story" not in briefing
