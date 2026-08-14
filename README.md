@@ -9,6 +9,8 @@ Prefab UIs (buttons, cards, progress, charts) instead of raw JSON, built with
 | App | Tools | What it demonstrates |
 | --- | --- | --- |
 | `quiz/quiz_server.py` | `take_quiz` (UI), `submit_answer` (backend) | Multi-turn state: the LLM generates questions, the user answers via buttons, each click grades through a backend tool, the final score is sent back to the conversation |
+| `news/news_server.py` | `news_curator` (UI), `compile_briefing` (backend) | Curated financial feeds (Bloomberg, Reuters, The Guardian, BBC) in tabbed panels with featured story, market-pulse metrics, and category-grouped headlines; compiles a markdown briefing and sends it back to the conversation |
+| `weather/weather_server.py` | `weather_app` (UI), `get_weather` (backend) | Dashboard with a button row that swaps state by calling a backend tool through the host's tools/call proxy (hashed tool names — the proxy never sees the mapping) |
 
 Ported from the upstream [fastmcp examples/apps](https://github.com/PrefectHQ/fastmcp/tree/main/examples/apps).
 
@@ -24,6 +26,8 @@ uv sync          # installs fastmcp[apps]
 
 ```bash
 uv run fastmcp dev apps quiz/quiz_server.py --mcp-port 8091
+uv run fastmcp dev apps news/news_server.py --mcp-port 8093
+uv run fastmcp dev apps weather/weather_server.py --mcp-port 8095
 ```
 
 - MCP server: `http://127.0.0.1:8091/mcp` (auto-reload on save)
@@ -40,6 +44,8 @@ demo server (:8090).
 
 ```bash
 uv run python quiz/quiz_server.py   # streamable HTTP at http://127.0.0.1:8091/mcp
+uv run python news/news_server.py   # streamable HTTP at http://127.0.0.1:8093/mcp
+uv run python weather/weather_server.py  # streamable HTTP at http://127.0.0.1:8095/mcp
 ```
 
 ## Wiring into the ai-backend-lab agent
@@ -52,6 +58,10 @@ so register them like any other MCP server — via `mcp_servers.json`,
 {
   "quiz": {
     "url": "http://127.0.0.1:8091/mcp",
+    "transport": "streamable_http"
+  },
+  "news": {
+    "url": "http://127.0.0.1:8093/mcp",
     "transport": "streamable_http"
   }
 }
