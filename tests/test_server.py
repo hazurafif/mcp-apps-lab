@@ -26,7 +26,7 @@ async def test_llm_facing_tools() -> None:
     names = {t.name for t in tools}
     assert {"take_quiz", "weather_app", "news_curator"} <= names
     # Backend tools must NOT leak to the LLM.
-    assert not names & {"submit_answer", "get_weather", "compile_briefing"}
+    assert not names & {"submit_answer", "get_weather", "get_feed"}
 
 
 @pytest.mark.asyncio
@@ -35,7 +35,7 @@ async def test_backend_tools_via_hash() -> None:
     cases = [
         (quiz_app, "submit_answer", {"question_index": 0, "selected": 2, "correct": 2, "total_questions": 5, "current_score": 0}),
         (weather_app, "get_weather", {"city": "tokyo"}),
-        (news_app, "compile_briefing", {"source": "bbc", "topic": "Energy"}),
+        (news_app, "get_feed", {"source": "bbc", "topic": "Energy"}),
     ]
     for app, tool_name, arguments in cases:
         digest = hash_tool(app.name, tool_name)
@@ -43,6 +43,10 @@ async def test_backend_tools_via_hash() -> None:
         assert not result.is_error
         data = json.loads(_text(result))
         assert data, tool_name
+    # get_feed returns stories (live or fallback) plus a compiled briefing
+    feed = data
+    assert feed["stories"], "feed should contain stories (live or fallback)"
+    assert "## " in feed["briefing"]
 
 
 @pytest.mark.asyncio
@@ -60,7 +64,7 @@ async def test_resources() -> None:
     """news:// and weather:// resources resolve through the server."""
     feed = await mcp.read_resource("news://bloomberg/feed")
     stories = json.loads(_text(feed))
-    assert stories[0]["headline"].startswith("S&P 500")
+    assert stories and stories[0]["headline"]
 
     briefing = await mcp.read_resource("news://guardian/briefing")
     assert "## " in _text(briefing)
@@ -79,8 +83,14 @@ async def test_prompts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ui_serialization() -> None:
-    """Each UI entry point renders to JSON without errors."""
+async def test_ui_serialization(monkeypatch) -> None:
+    """Each UI entry point renders to JSON without errors (news offline-safe)."""
+    import mcp_apps_lab.tools.news as news_tools
+
+    def _offline(*args, **kwargs):
+        raise OSError("offline")
+
+    monkeypatch.setattr(news_tools, "_fetch_feed", _offline)
     for ui, kwargs in [
         (take_quiz, {"topic": "Python"}),
         (weather_ui, {"city": "berlin"}),
@@ -107,49 +117,16 @@ def test_weather_ui_has_location_input() -> None:
     assert walk(data), "weather UI should contain an Input component"
 
 
-def test_news_ui_with_llm_generated_stories() -> None:
-    """The LLM can pass its own feed; stories are grouped by source into tabs."""
-    stories = [
-        {
-            "source": "reuters",
-            "headline": "Copper Jumps on Supply Worries",
-            "summary": "Mines in Chile reported disruptions.",
-            "category": "Markets",
-            "sentiment": "positive",
-            "minutes_ago": "5m ago",
-            "tickers": ["HG1"],
-            "url": "https://example.com/copper",
-        },
-        {
-            "source": "reuters",
-            "headline": "Yen Weakens Past 160",
-            "summary": "BOJ watchers expect intervention.",
-            "category": "Markets",
-            "sentiment": "negative",
-            "minutes_ago": "15m ago",
-            "tickers": ["JPY="],
-        },
-    ]
-    data = news_curator(topic="Commodities", stories=stories).to_json()
-    serialized = json.dumps(data)
-    assert "Copper Jumps on Supply Worries" in serialized
-    assert "Yen Weakens Past 160" in serialized
-    assert "reuters" in serialized  # tab value
-    assert "Commodities" in serialized
+def test_news_ui_uses_fallback_when_offline(monkeypatch) -> None:
+    """UI launch falls back to sample data when the network is unreachable."""
+    import mcp_apps_lab.tools.news as news_tools
 
+    def _offline(*args, **kwargs):
+        raise OSError("offline")
 
-@pytest.mark.asyncio
-async def test_compile_briefing_filters_llm_stories() -> None:
-    """compile_briefing compiles only the active source when given a feed list."""
-    digest = hash_tool(news_app.name, "compile_briefing")
-    stories = [
-        {"source": "bbc", "headline": "BBC story", "category": "Business"},
-        {"source": "guardian", "headline": "Guardian story", "category": "Economy"},
-    ]
-    result = await mcp.call_tool(
-        f"{digest}_compile_briefing",
-        {"source": "guardian", "topic": "Test", "stories": stories},
-    )
-    briefing = json.loads(_text(result))["briefing"]
-    assert "Guardian story" in briefing
-    assert "BBC story" not in briefing
+    monkeypatch.setattr(news_tools, "_fetch_feed", _offline)
+    data = news_curator(topic="Markets").to_json()
+    assert data["view"]
+    assert data["state"]["live"] is False
+    assert data["state"]["stories"], "fallback stories should be present"
+    assert "Markets" in json.dumps(data)

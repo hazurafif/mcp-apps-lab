@@ -1,15 +1,12 @@
-"""News Curator app — tabbed, curated feeds with briefing export.
+"""News Curator app — live RSS feeds in tabbed panels with briefing export.
 
-The LLM calls ``news_curator(topic)`` to launch the dashboard — it can let
-``stories=None`` (built-in sample feeds) or generate its own curated feed
-and pass it in, exactly like ``take_quiz`` accepts generated questions.
-Stories are grouped by their ``source`` field into tabs. Tabs switch
-between Bloomberg, Reuters, The Guardian, and BBC News feeds. "Compile
-Briefing" calls the ``compile_briefing`` backend tool (from
-``mcp_apps_lab.tools``) through the tool proxy — passing the rendered feed
-so LLM-generated stories compile correctly; the markdown draft is shown in
-the UI and "Send Briefing to Chat" pushes it back to the LLM via
-``SendMessage`` (multi-turn, like the quiz's final score).
+The LLM calls ``news_curator(topic)`` to launch the dashboard. Each tab
+fetches its feed live through the ``get_feed`` backend tool (from
+``mcp_apps_lab.tools``) over the host's tools/call proxy — the same pattern
+as the weather app's city buttons. Feeds: Bloomberg Markets, CNBC Investing,
+The Guardian Business, and BBC Business. If a feed can't be reached the
+built-in sample data is shown (LIVE/SAMPLE badge says which), and the
+compiled briefing is sent back to the LLM via ``SendMessage``.
 """
 
 from __future__ import annotations
@@ -26,7 +23,6 @@ from prefab_ui.components import (
     Heading,
     If,
     Link,
-    Metric,
     Muted,
     Row,
     Separator,
@@ -36,175 +32,99 @@ from prefab_ui.components import (
 )
 from prefab_ui.rx import ERROR, RESULT, Rx
 
-from mcp_apps_lab.data.news import (
-    CATEGORY_ORDER,
-    SENTIMENT_VARIANTS,
-    SOURCES,
-    STORIES,
-    Story,
-    pulse_stories,
-)
-from mcp_apps_lab.tools.news import compile_briefing
+from mcp_apps_lab.data.news import SOURCES
+from mcp_apps_lab.tools.news import get_feed
 
 app = FastMCPApp("News Curator")
-app.add_tool(compile_briefing)
+app.add_tool(get_feed)
 
-
-def _group_feeds(stories: list[Story] | None) -> dict[str, list[Story]]:
-    """Resolve the feeds to render: LLM-provided stories grouped by source,
-    or the built-in sample feeds (normalized so every story carries its
-    ``source`` key)."""
-    if not stories:
-        return {
-            source_id: [dict(s, source=source_id) for s in feed]
-            for source_id, feed in STORIES.items()
-        }
-    feeds: dict[str, list[Story]] = {}
-    for story in stories:
-        feeds.setdefault(story.get("source", "bloomberg"), []).append(dict(story))
-    return feeds
+# Story slots per tab (0 = featured, 1..SLOTS-1 = regular cards).
+SLOTS = 8
 
 
 @app.ui()
-def news_curator(topic: str = "Financial News", stories: list[Story] | None = None) -> PrefabApp:
-    """Launch a curated news dashboard.
+def news_curator(topic: str = "Financial News") -> PrefabApp:
+    """Launch a curated news dashboard with live RSS feeds.
 
     - topic: displayed in the header (e.g. "Global Markets", "AI & Tech")
-    - stories: OPTIONAL — generate your own curated feed instead of using
-      the built-in sample data. A flat list of story dicts, each with:
-        - "source": feed id the story belongs to (bloomberg, reuters,
-          guardian, bbc — or any other id; stories are grouped by this
-          into tabs)
-        - "headline": title text
-        - "summary": 1-2 sentence description
-        - "category": Markets, Economy, Technology, World, or Business
-        - "sentiment": positive, negative, or neutral
-        - "minutes_ago": e.g. "12m ago"
-        - "tickers": optional list of market tickers (e.g. ["SPX"])
-        - "url": optional link for the headline
-
-      When omitted, the built-in sample feeds are shown.
+      and used in the compiled briefing
     """
     briefing = Rx("briefing")
-    feeds = _group_feeds(stories)
-    flat_stories = [story for feed in feeds.values() for story in feed]
+    live = Rx("live")
 
-    def story_card(story: Story, featured: bool = False) -> None:
-        """Render one story card inside the current container."""
-        with Card(css_class="border-primary" if featured else None), Column(
+    def story_card(i: int, featured: bool = False) -> None:
+        """Render story slot ``i`` (hidden until the feed data arrives)."""
+        slot = Rx("stories")[i]
+        with If(slot), Card(css_class="border-primary" if featured else None), Column(
             gap=2, css_class="p-4"
         ):
             with Row(gap=2, align="center", wrap=True):
-                Badge(story.get("category", "Business"), variant="outline")
-                Badge(
-                    story.get("sentiment", "neutral").title(),
-                    variant=SENTIMENT_VARIANTS.get(
-                        story.get("sentiment", "neutral"), "secondary"
-                    ),
-                )
-                Muted(story.get("minutes_ago", "now"))
-            headline = story.get("headline", "Untitled")
-            url = story.get("url")
-            if url:
-                Link(
-                    headline,
-                    href=url,
-                    target="_blank",
-                    bold=True,
-                    css_class="text-base" + (" text-lg" if featured else ""),
-                )
-            else:
-                Text(
-                    headline,
-                    bold=True,
-                    css_class="text-base" + (" text-lg" if featured else ""),
-                )
-            if story.get("summary"):
-                Muted(story["summary"])
-            if story.get("tickers"):
-                with Row(gap=2, wrap=True):
-                    for ticker in story["tickers"]:
-                        Badge(ticker, variant="secondary", css_class="font-mono")
+                Muted(slot.minutes_ago)
+            headline_class = "text-base" + (" text-lg" if featured else "")
+            with If(slot.url):
+                Link(slot.headline, href=slot.url, target="_blank", bold=True, css_class=headline_class)
+            with If(~slot.url):
+                Text(slot.headline, bold=True, css_class=headline_class)
+            with If(slot.summary):
+                Muted(slot.summary)
+
+    def feed_actions() -> list:
+        """Actions after a successful feed fetch: sync stories + briefing."""
+        return [
+            SetState("stories", RESULT.stories),
+            SetState("briefing", RESULT.briefing),
+            SetState("live", RESULT.live),
+        ]
+
+    def fetch_button(variant: str, label: str, tabs: Tabs) -> Button:
+        return Button(
+            label,
+            variant=variant,
+            on_click=CallTool(
+                get_feed,
+                arguments={"source": str(tabs.rx), "topic": topic},
+                on_success=feed_actions(),
+                on_error=ShowToast(ERROR, variant="error"),
+            ),
+        )
+
+    # The first tab's feed is fetched at launch (short timeout; sample
+    # fallback if the network is unreachable).
+    initial = get_feed("bloomberg", topic=topic)
 
     with Column(gap=6, css_class="p-6 max-w-3xl") as view:
         with Column(gap=1):
             Heading("News Curator")
-            Muted(f"Curated headlines across {len(feeds)} sources — {topic}.")
+            Muted(f"Live headlines across {len(SOURCES)} sources — {topic}.")
+            with Row(gap=2, align="center"):
+                Badge(live.then("● LIVE FEED", "○ SAMPLE DATA"), variant="secondary")
 
-        with Tabs(value=next(iter(feeds)), variant="line") as tabs:
-            for source_id, feed in feeds.items():
-                label = next(
-                    (s["label"] for s in SOURCES if s["id"] == source_id),
-                    source_id.title(),
-                )
-
-                with Tab(label, value=source_id), Column(gap=4):
-                    # Featured story
+        with Tabs(
+            value="bloomberg",
+            variant="line",
+            on_change=CallTool(
+                get_feed,
+                arguments={"source": str(Rx("tabs")), "topic": topic},
+                on_success=feed_actions(),
+                on_error=ShowToast(ERROR, variant="error"),
+            ),
+        ) as tabs:
+            for source in SOURCES:
+                with Tab(source["label"], value=source["id"]), Column(gap=4):
                     Text(
                         "Top Story",
                         css_class="text-xs font-semibold uppercase tracking-wide text-muted-foreground",
                     )
-                    story_card(feed[0], featured=True)
-
-                    # Market pulse
-                    counts = pulse_stories(feed)
-                    with Row(gap=3):
-                        Metric(
-                            label="Markets",
-                            value=counts["Markets"],
-                            description="stories",
-                        )
-                        Metric(
-                            label="Economy",
-                            value=counts["Economy"],
-                            description="stories",
-                        )
-                        Metric(
-                            label="Technology",
-                            value=counts["Technology"],
-                            description="stories",
-                        )
-
-                    # Category-grouped feed
-                    with Column(gap=3):
-                        for category in CATEGORY_ORDER:
-                            section = [s for s in feed if s.get("category") == category]
-                            if not section:
-                                continue
-                            with Column(gap=2):
-                                Separator()
-                                Text(
-                                    category,
-                                    css_class="text-xs font-semibold uppercase tracking-wide text-muted-foreground",
-                                )
-                                for story in section:
-                                    story_card(story)
+                    story_card(0, featured=True)
+                    for i in range(1, SLOTS):
+                        story_card(i)
 
         Separator()
 
-        # Compile a briefing of the active feed and push it back to the LLM
         with Column(gap=3):
             with Row(gap=2, align="center"):
-                Button(
-                    "Compile Briefing",
-                    variant="default",
-                    on_click=CallTool(
-                        compile_briefing,
-                        arguments={
-                            "source": str(tabs.rx),
-                            "topic": topic,
-                            "stories": flat_stories,
-                        },
-                        on_success=[
-                            SetState("briefing", RESULT.briefing),
-                            ShowToast(
-                                "Briefing compiled — review below, then send it to the chat."
-                            ),
-                        ],
-                        on_error=ShowToast(ERROR, variant="error"),
-                    ),
-                )
-                Muted("Turns the active feed into markdown you can send to the chat.")
+                fetch_button("outline", "Refresh Feed", tabs)
+                Muted("Tab clicks and refresh re-fetch the active feed.")
 
             with If(briefing), Card(), Column(gap=3, css_class="p-4"):
                 Text(
@@ -223,6 +143,8 @@ def news_curator(topic: str = "Financial News", stories: list[Story] | None = No
     return PrefabApp(
         view=view,
         state={
-            "briefing": "",
+            "stories": initial["stories"],
+            "briefing": initial["briefing"],
+            "live": initial["live"],
         },
     )

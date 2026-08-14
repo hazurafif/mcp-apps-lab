@@ -16,10 +16,10 @@ def register(mcp: FastMCP) -> None:
         """
         return f"""You are the user's morning news briefing assistant. Topic: {topic}.
 
-1. Read the feeds as resources — news://bloomberg/feed, news://reuters/feed,
+1. Read the live feeds as resources — news://bloomberg/feed, news://cnbc/feed,
    news://guardian/feed, news://bbc/feed — and summarize the top stories.
-2. Highlight the market movers and any sentiment shifts across sources.
+2. Highlight the market movers and any shifts across sources.
 3. Launch the news_curator UI with topic "{topic}" so the user can browse
-   the full curated feeds and compile their own briefing.
+   the live feeds and send a compiled briefing back to the chat.
 
 Keep the summary tight: 3-5 bullets, then hand off to the UI."""

@@ -11,9 +11,9 @@ raw JSON; any MCP host renders them, and the LLM sees a text summary.
 | --- | --- | --- | --- |
 | Quiz | `take_quiz` | `submit_answer` | Multi-turn state: the LLM generates questions, the user answers via buttons, each click grades through a backend tool, the final score is sent back to the conversation |
 | Weather | `weather_app` | `get_weather` | Dashboard with a free-text location input (no geocoding — direct lookup, unknown names fall back to Jakarta with a toast) plus preset city buttons; every lookup goes through the host's tools/call proxy (hashed tool names — the proxy never sees the mapping) |
-| News Curator | `news_curator` | `compile_briefing` | Curated financial feeds (Bloomberg, Reuters, The Guardian, BBC) in tabbed panels with a featured story, market-pulse metrics, and category-grouped headlines; the LLM can pass its own generated feed (`stories` param, grouped by `source` — falls back to built-in sample data); compiles a markdown briefing and sends it back to the conversation |
+| News Curator | `news_curator` | `get_feed` | Live RSS feeds (Bloomberg Markets, CNBC, The Guardian Business, BBC Business) fetched through the backend tool on tab click / refresh — parsed with the stdlib, sample-data fallback when offline (LIVE/SAMPLE badge); compiles a markdown briefing and sends it back to the conversation |
 
-Also exposed server-side: resources (`news://{source}/feed`,
+Also exposed server-side: live resources (`news://{source}/feed`,
 `news://{source}/briefing`, `weather://{city}/current`) and a prompt
 (`morning-briefing`).
 
@@ -29,10 +29,10 @@ src/mcp_apps_lab/
 ├── tools/             # backend tool functions the UIs call via the tool proxy
 │   ├── quiz.py        #   submit_answer
 │   ├── weather.py     #   get_weather
-│   └── news.py        #   compile_briefing
-├── resources/         # MCP resources over the shared data (news://, weather://)
+│   └── news.py        #   get_feed (live RSS fetch + offline fallback)
+├── resources/         # MCP resources over the shared data (news:// live feeds, weather://)
 ├── prompts/           # MCP prompt templates (morning-briefing)
-└── data/              # shared static data behind tools, apps, and resources
+└── data/              # feed definitions + offline fallback data
 ```
 
 ## Setup
