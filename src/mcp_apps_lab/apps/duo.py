@@ -154,22 +154,71 @@ def _grade_actions(item: dict, i: int, total: int, extra: dict) -> CallTool:
     )
 
 
-_TOTAL = 1  # replaced below; avoids referencing the loop variable in helpers
+_FLAVOR = {
+    "lesson": {
+        "badge": "DAILY PRACTICE",
+        "item": "Exercise",
+        "done": "Lesson Complete! 🎉",
+        "msg": "English Duo lesson complete!",
+    },
+    "flashcards": {
+        "badge": "FLASHCARDS",
+        "item": "Card",
+        "done": "Flashcard session complete! 🎉",
+        "msg": "English Duo flashcard review complete!",
+    },
+}
 
 
 @app.ui()
-def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
+def duo_english(level: str = "auto", items: int = 6, words: list[dict] | None = None) -> PrefabApp:
     """Launch an English Duo lesson.
 
     - level: CEFR level for new words — "auto" (default) picks the level
       with the most due reviews, or the first level with unseen words.
     - items: exercises per lesson (3-10).
+    - words: AI-generated vocabulary. GENERATE FRESH WORDS YOURSELF for
+      the user's level/topic instead of relying on the built-in bank:
+      a list of {"word", "definition" (simple English), "example"
+      (sentence using the word), "pos", "level" (a1/a2/b1/b2)}.
+      Valid entries are saved and get their own FSRS card.
 
     Exercise types cycle mc → fill → type → order → flip; each answer
     updates the word's FSRS schedule, XP (+combo bonus), and hearts (5,
-    refill daily).
+    refill daily). For pure flashcard review, use duo_flashcards instead.
     """
-    lesson = build_lesson(level, items)
+    return _duo_app(level, items, "lesson", words)
+
+
+@app.ui()
+def duo_flashcards(
+    level: str = "auto", items: int = 10, words: list[dict] | None = None
+) -> PrefabApp:
+    """Launch a flashcards-only review session (no quiz questions).
+
+    Every card shows a word; flip it to reveal the definition, then
+    self-rate Again / Hard / Good / Easy — mapped straight onto the FSRS
+    schedule (Again = forgot, Hard/Good/Easy = remembered with 8/10/12 XP).
+
+    - level: CEFR level for new words — "auto" (default).
+    - items: cards per session (3-10).
+    - words: AI-generated vocabulary. GENERATE FRESH WORDS YOURSELF for
+      the user's level/topic instead of relying on the built-in bank:
+      a list of {"word", "definition" (simple English), "example",
+      "pos", "level" (a1/a2/b1/b2)}. Valid entries are saved and get
+      their own FSRS card.
+
+    Use this when the user asks for flashcards / a review deck.
+    """
+    return _duo_app(level, items, "flashcards", words)
+
+
+def _duo_app(level: str, items: int, mode: str, words: list[dict] | None = None) -> PrefabApp:
+    """Shared lesson/flashcards builder; ``mode`` sets labels + item types."""
+    lesson = build_lesson(level, items, flip_only=(mode == "flashcards"), words=words)
+    flavor = _FLAVOR[mode]
+    resolved_level = lesson["level"]
+    ai_generated = lesson["source"] == "ai"
     lesson_items = lesson["items"]
     total = len(lesson_items)
     p = lesson["profile"]
@@ -189,7 +238,13 @@ def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
                 variant="default",
                 css_class="px-4 py-2 text-base font-extrabold rounded-2xl",
             )
-            Badge("DAILY PRACTICE", variant="outline", css_class="text-xs tracking-widest")
+            Badge(
+                f"{resolved_level.upper()} · {flavor['badge']}",
+                variant="outline",
+                css_class="text-xs tracking-widest",
+            )
+            if ai_generated:
+                Badge("✨ AI-GENERATED", variant="warning", css_class="text-xs font-bold")
 
         # ------------------------------------------------------ dashboard
         with Row(gap=3, align="center", wrap=True):
@@ -218,8 +273,9 @@ def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
             with Card(), Column(gap=3, css_class="p-4"):
                 Heading("Nothing to practice right now", level=3)
                 Muted(
-                    "All words are scheduled. Ask the assistant to add new "
-                    "words, or come back when reviews are due."
+                    f"No {resolved_level.upper()} words due — they're all "
+                    "scheduled. Ask the assistant to add new words, or come "
+                    "back when reviews are due."
                 )
             return PrefabApp(view=view, state=_initial_state(p, lesson_items), theme=DUO_THEME)
 
@@ -230,7 +286,7 @@ def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
             with If(visible), Card(), Column(gap=4, css_class="p-4"):
                 with Row(align="center", gap=3):
                     Text(
-                        f"Exercise {i + 1} of {total}",
+                        f"{flavor['item']} {i + 1} of {total}",
                         css_class="text-sm font-bold text-muted-foreground",
                     )
                     Badge(item["level"].upper(), variant="outline")
@@ -418,7 +474,7 @@ def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
             Card(css_class="border-2 border-primary rounded-2xl"),
             Column(gap=3, css_class="p-4 items-center text-center"),
         ):
-            Heading("Lesson Complete! 🎉", level=2, css_class="font-extrabold")
+            Heading(flavor["done"], level=2, css_class="font-extrabold")
             Text(
                 f"{Rx('lesson_correct')}/{total} correct · +{Rx('lesson_xp')} XP",
                 css_class="text-2xl font-extrabold text-primary",
@@ -430,8 +486,8 @@ def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
                 variant="default",
                 css_class=_CTA_CLASS,
                 on_click=SendMessage(
-                    "English Duo lesson complete! "
-                    f"Score: {Rx('lesson_correct')}/{total} correct, "
+                    flavor["msg"]
+                    + f" Score: {Rx('lesson_correct')}/{total} correct, "
                     f"+{Rx('lesson_xp')} XP (⭐ {Rx('xp')} total), "
                     f"🔥 {Rx('streak')}-day streak, "
                     f"{Rx('league')} league · Level {Rx('level')}."

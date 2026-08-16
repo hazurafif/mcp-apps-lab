@@ -13,11 +13,12 @@ raw JSON; any MCP host renders them, and the LLM sees a text summary.
 | Quiz | `take_quiz` | `submit_answer` | Multi-turn state: the LLM generates questions, the user answers via buttons, each click grades through a backend tool, the final score is sent back to the conversation |
 | Weather | `weather_app` | `get_weather` | Live forecast from the Open-Meteo API: free-text location input geocodes ANY city name (no fixed table — “bekasi” works), shows current conditions with the city's local time (🕐 20:31 WIB), region/country, and a 5-day forecast; unknown names fall back to Jakarta, sample data offline (LIVE/SAMPEL badge); lookups go through the host's tools/call proxy (hashed tool names — the proxy never sees the mapping) |
 | News Curator | `news_curator` | `get_feed` | Live RSS feeds (Bloomberg Markets, CNBC, The Guardian Business, BBC Business) fetched through the backend tool on tab click / refresh — parsed with the stdlib, sample-data fallback when offline (LIVE/SAMPLE badge); compiles a markdown briefing and sends it back to the conversation |
-| English Duo | `duo_english` | `grade_answer`, `get_profile`, `add_word` | A Duolingo-style English learning app: CEFR-graded vocabulary (A1-B2), FSRS-6 spaced-repetition cards per word, and game mechanics — XP + combo bonus, 5 hearts (mistakes cost one, daily refill), daily streak 🔥, and a Bronze→Diamond level ladder. Due reviews + new words drive each lesson; answers are graded by the backend tool which reschedules the word's card and updates the profile in SQLite |
+| English Duo | `duo_english`, `duo_flashcards` | `grade_answer`, `get_profile`, `add_word` | A Duolingo-style English learning app: CEFR-graded vocabulary (A1-B2), FSRS-6 spaced-repetition cards per word, and game mechanics — XP + combo bonus, 5 hearts (mistakes cost one, daily refill), daily streak 🔥, and a Bronze→Diamond level ladder. Due reviews + new words drive each lesson; answers are graded by the backend tool which reschedules the word's card and updates the profile in SQLite. `duo_english` cycles five exercise types (MC, fill, typing, sentence builder, flashcards); `duo_flashcards` is a pure flip-card review session (Again/Hard/Good/Easy → FSRS) with no quiz questions |
 
 Also exposed server-side: live resources (`news://{source}/feed`,
 `news://{source}/briefing`, `weather://{city}/current`, `duo://profile`,
-`duo://due`) and prompts (`morning-briefing`, `daily-english`).
+`duo://due`, `duo://words/{level}`, `duo://guide/{level}`, `duo://levels`)
+and prompts (`morning-briefing`, `daily-english`).
 
 ## Layout
 
@@ -101,14 +102,22 @@ uv run fastmcp dev apps src/mcp_apps_lab/server.py --mcp-port 8090
 State lives in a SQLite database (`~/.mcp-apps-lab/duo.db`, override with
 `DUO_DB_PATH`):
 
-- **Word bank** — 120 CEFR-graded words (A1-B2) with simple definitions and
-  example sentences; the assistant can add more via the `add_word` tool.
+- **AI-generated content** — the coach generates fresh, CEFR-appropriate
+  vocabulary itself (personalized to the user's level/interests) and
+  passes it via the `words` argument of `duo_english` / `duo_flashcards`;
+  sessions built this way show an ✨ AI-GENERATED badge. Every generated
+  word is saved to the bank with its own FSRS card, so it comes back in
+  later review sessions. The built-in 120-word bank remains the fallback
+  (and the source for due-review-only sessions).
 - **Duolingo brand UI** — Nunito typeface, Duolingo palette (green `#58CC02`,
   blue `#1CB0F6`, yellow `#FFC800`, red `#FF4B4B`), rounded cards, 3D-press
   buttons, and green/red feedback banners — distinct from the generic quiz UI.
 - **Spaced repetition** — one FSRS-6 card per word (`fsrs` package, the
   algorithm modern Anki uses). Correct → *Good*, wrong → *Again*; due
   reviews are served first in every lesson, new words fill the rest.
+  An explicit level (e.g. `duo_flashcards(level="b1")`) is honored
+  strictly: only that level's due reviews and new words are served,
+  never other levels. The masthead shows the active level.
 - **Game mechanics** — 10 XP per correct answer + combo bonus (capped),
   ❤️ 5 hearts (a mistake costs one; refill daily), 🔥 streak (once per day
   per completed lesson), levels 1-10 with Bronze→Diamond leagues.
@@ -122,9 +131,16 @@ State lives in a SQLite database (`~/.mcp-apps-lab/duo.db`, override with
   - `flip` — flashcard: flip the card, then self-rate Again / Hard /
     Good / Easy — mapped straight onto the FSRS ratings, so reviews get
     a real difficulty signal and XP (0/8/10/12) instead of just right/wrong
+  - For a **pure flashcards session** (no quiz questions), the
+    `duo_flashcards` UI serves flip cards only — flip to reveal the
+    definition, self-rate, and the FSRS schedule updates per card
 - **Resources/prompts** — `duo://profile` and `duo://due` give the
-  assistant live stats; the `daily-english` prompt wires it into a daily
-  practice routine.
+  assistant live stats. The AI-generation reference resources:
+  `duo://guide/{level}` (the per-level generation prompt — learner
+  profile, word scope, definition/example rules, output format),
+  `duo://words/{level}` (existing words at a level, to match style and
+  avoid duplicates), and `duo://levels` (overview + word counts). The
+  `daily-english` prompt wires everything into a daily routine.
 
 ## Wiring into the ai-backend-lab agent
 

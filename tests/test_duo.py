@@ -10,7 +10,7 @@ import pytest
 
 from mcp_apps_lab.data.english import WORD_BANK
 from mcp_apps_lab.duo import engine, game
-from mcp_apps_lab.duo.scheduler import review_card
+from mcp_apps_lab.duo.scheduler import due_iso, new_card_json, review_card
 from mcp_apps_lab.duo.store import Store, default_db_path, today_iso
 
 # ---------------------------------------------------------------- game
@@ -298,6 +298,91 @@ def test_grade_answer_flip_ratings(tmp_path) -> None:
     hard = engine.grade_answer(item["word"], "flip", rating=2, finished=True, db_path=db)
     assert hard["is_correct"] is True
     assert hard["xp_gain"] == 8
+
+
+def test_build_lesson_flip_only_is_pure_flashcards(tmp_path) -> None:
+    """flip_only=True builds a deck where every item is a flip card."""
+    db = tmp_path / "duo.db"
+    lesson = engine.build_lesson("a1", 5, db, flip_only=True)
+    assert len(lesson["items"]) == 5
+    assert all(i["type"] == "flip" for i in lesson["items"])
+    assert all(i["definition"] and i["example"] for i in lesson["items"])
+
+
+def test_duo_flashcards_ui_is_not_a_quiz(tmp_path, monkeypatch) -> None:
+    """The duo_flashcards UI renders flip cards only — no options anywhere."""
+    monkeypatch.setenv("DUO_DB_PATH", str(tmp_path / "duo.db"))
+    from mcp_apps_lab.apps.duo import duo_flashcards
+
+    data = duo_flashcards(level="a1", items=5).to_json()
+    blob = str(data)
+    assert "FLASHCARDS" in blob
+    assert "Card 1 of 5" in blob
+    assert "Flip card" in blob and "Again" in blob
+    assert "options" not in blob  # no multiple-choice anywhere
+    assert any(f"flipped_{i}" in data["state"] for i in range(5))
+    # the lesson UI still has the mixed types
+    from mcp_apps_lab.apps.duo import duo_english
+
+    lesson_blob = str(duo_english(level="a1", items=5).to_json())
+    assert "DAILY PRACTICE" in lesson_blob
+
+
+def test_explicit_level_not_polluted_by_other_level_due(tmp_path) -> None:
+    """Requesting b1 never serves due reviews from other levels (e.g. a1)."""
+    db = tmp_path / "duo.db"
+    store = Store(db)
+    store.save_review("apple", new_card_json(), due_iso(), "Review", 1, 0, 3, 1.0)  # a1, due NOW
+    lesson = engine.build_lesson("b1", 5, db)
+    assert lesson["level"] == "b1"
+    assert all(i["level"] == "b1" for i in lesson["items"])
+    # auto mode still serves the due a1 word
+    auto = engine.build_lesson("auto", 5, db)
+    assert any(i["word"] == "apple" for i in auto["items"])
+
+
+def test_build_lesson_with_ai_generated_words(tmp_path) -> None:
+    """LLM-supplied words override the bank, are persisted, and are graded."""
+    db = tmp_path / "duo.db"
+    words = [
+        {"word": "serendipity", "definition": "a happy accident", "example": "Meeting you was serendipity.", "pos": "noun", "level": "b2"},
+        {"word": "meticulous", "definition": "very careful about details", "example": "She is meticulous about her work.", "pos": "adjective", "level": "b2"},
+        {"word": "", "definition": "invalid entry"},  # skipped: no word
+        {"word": "no-def"},  # skipped: no definition
+    ]
+    lesson = engine.build_lesson("b2", 5, db, flip_only=True, words=words)
+    assert lesson["source"] == "ai"
+    assert lesson["level"] == "b2"
+    assert {i["word"] for i in lesson["items"]} == {"serendipity", "meticulous"}
+    assert all(i["type"] == "flip" for i in lesson["items"])
+    # persisted -> gets a card when graded, and can be served again later
+    assert Store(db).get_word("serendipity") is not None
+    result = engine.grade_answer("serendipity", "flip", rating=3, finished=True, db_path=db)
+    assert result["is_correct"] is True
+    assert Store(db).get_card("serendipity") is not None
+
+
+def test_build_lesson_ai_words_fallback_to_bank_when_invalid(tmp_path) -> None:
+    """All-invalid AI words fall back to the normal bank lesson."""
+    db = tmp_path / "duo.db"
+    lesson = engine.build_lesson("a1", 5, db, words=[{"word": "", "definition": ""}])
+    assert lesson["source"] == "bank"
+    assert lesson["items"]
+
+
+def test_duo_flashcards_ai_badge(tmp_path, monkeypatch) -> None:
+    """AI-generated sessions are labeled in the masthead."""
+    monkeypatch.setenv("DUO_DB_PATH", str(tmp_path / "duo.db"))
+    from mcp_apps_lab.apps.duo import duo_flashcards
+
+    data = duo_flashcards(
+        level="b1",
+        items=5,
+        words=[{"word": "grok", "definition": "to understand deeply", "example": "I grok it now.", "level": "b1"}],
+    ).to_json()
+    blob = str(data)
+    assert "AI-GENERATED" in blob
+    assert "B1 · FLASHCARDS" in blob
 
 
 def test_profile_json_round_trip(tmp_path) -> None:

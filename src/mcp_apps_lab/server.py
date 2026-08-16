@@ -10,7 +10,8 @@ A single ``FastMCP`` instance exposes:
   the tool proxy under hashed names; never listed to the LLM.
 - **MCP resources** (``resources/``) — ``news://{source}/feed``,
   ``news://{source}/briefing``, ``weather://{city}/current``,
-  ``duo://profile``, ``duo://due``.
+  ``duo://profile``, ``duo://due``, ``duo://words/{level}``,
+  ``duo://guide/{level}``, ``duo://levels``.
 - **MCP prompts** (``prompts/``) — ``morning-briefing``, ``daily-english``.
 
 Run with:

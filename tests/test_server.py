@@ -9,7 +9,7 @@ from fastmcp.server.providers.addressing import hash_tool
 
 from mcp_apps_lab import mcp
 from mcp_apps_lab.apps import duo_app, news_app, quiz_app, weather_app
-from mcp_apps_lab.apps.duo import duo_english
+from mcp_apps_lab.apps.duo import duo_english, duo_flashcards
 from mcp_apps_lab.apps.news import news_curator
 from mcp_apps_lab.apps.quiz import take_quiz
 from mcp_apps_lab.apps.weather import weather_app as weather_ui
@@ -25,7 +25,7 @@ async def test_llm_facing_tools() -> None:
     """The four UI entry points are the only tools advertised to the LLM."""
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
-    assert {"take_quiz", "weather_app", "news_curator", "duo_english"} <= names
+    assert {"take_quiz", "weather_app", "news_curator", "duo_english", "duo_flashcards"} <= names
     # Backend tools must NOT leak to the LLM.
     assert not names & {
         "submit_answer",
@@ -152,6 +152,19 @@ async def test_resources(tmp_path, monkeypatch) -> None:
     duo = await mcp.read_resource("duo://profile")
     assert json.loads(_text(duo))["xp"] == 0
 
+    duo_words = await mcp.read_resource("duo://words/b1")
+    words = json.loads(_text(duo_words))
+    assert words["level"] == "b1" and words["count"] >= 10
+    assert words["words"][0]["definition"]
+
+    guide = await mcp.read_resource("duo://guide/b1")
+    guide_text = _text(guide)
+    assert "CEFR B1" in guide_text and "duo://words/b1" in guide_text
+
+    levels = await mcp.read_resource("duo://levels")
+    overview = json.loads(_text(levels))
+    assert {lv["level"] for lv in overview["levels"]} == {"a1", "a2", "b1", "b2"}
+
 
 @pytest.mark.asyncio
 async def test_prompts() -> None:
@@ -183,6 +196,7 @@ async def test_ui_serialization(monkeypatch, tmp_path) -> None:
         (weather_ui, {"city": "berlin"}),
         (news_curator, {"topic": "Global Markets"}),
         (duo_english, {"level": "a1"}),
+        (duo_flashcards, {"level": "a1"}),
     ]:
         app = ui(**kwargs)
         data = app.to_json()

@@ -246,13 +246,26 @@ class Store:
                 (word, rating, reviewed_at, interval_days),
             )
 
-    def due_words(self, limit: int) -> list[str]:
-        """Words due for review now, soonest first."""
+    def due_words(self, limit: int, level: str | None = None) -> list[str]:
+        """Words due for review now, soonest first.
+
+        With ``level``, only due words at that CEFR level are returned
+        (an explicit lesson level must not be polluted by other levels).
+        """
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT word FROM cards WHERE due <= ? ORDER BY due ASC LIMIT ?",
-                (due_iso(), limit),
-            ).fetchall()
+            if level:
+                rows = conn.execute(
+                    "SELECT c.word AS word FROM cards c"
+                    " JOIN words w ON w.word = c.word"
+                    " WHERE c.due <= ? AND w.level = ?"
+                    " ORDER BY c.due ASC LIMIT ?",
+                    (due_iso(), level, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT word FROM cards WHERE due <= ? ORDER BY due ASC LIMIT ?",
+                    (due_iso(), limit),
+                ).fetchall()
         return [r["word"] for r in rows]
 
     def unseen_words(self, level: str, limit: int) -> list[str]:
@@ -285,6 +298,16 @@ class Store:
                 " WHEN 'b1' THEN 3 ELSE 4 END LIMIT 1"
             ).fetchone()
         return row["level"] if row else "a1"
+
+    def words_at_level(self, level: str) -> list[dict]:
+        """All words at a CEFR level (seed bank + user/AI-added), sorted."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT word, pos, definition, example, level, source FROM words"
+                " WHERE level = ? ORDER BY word",
+                (level,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def due_words_detail(self, limit: int = 25) -> list[dict]:
         """Due words with their bank entries (for the duo://due resource)."""

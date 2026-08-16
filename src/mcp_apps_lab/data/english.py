@@ -153,3 +153,88 @@ WORD_BANK: list[WordEntry] = [
 def words_by_level(level: str) -> list[WordEntry]:
     """Return the word bank entries for a CEFR level (a1/a2/b1/b2)."""
     return [w for w in WORD_BANK if w["level"] == level]
+
+
+# Generation guides the AI reads before creating vocabulary (duo://guide/{level}).
+_GUIDE_TEMPLATE = """# Generating English vocabulary — CEFR {level_label}
+
+You are about to generate fresh vocabulary for the English Duo app. First
+read `duo://words/{level}` to see the words already in the bank at this
+level — DO NOT duplicate any of them, and match their style.
+
+## Target learner ({level})
+{learner}
+
+## Word choices
+{words}
+
+## Definitions (write them yourself)
+{definitions}
+
+## Example sentences (write them yourself)
+{examples}
+
+## Output format
+Pass the words to the app as a JSON list in the `words` argument of
+duo_english / duo_flashcards:
+
+    [{{"word": "...", "definition": "...", "example": "...", "pos": "noun", "level": "{level}"}}]
+
+- `definition`: simple English paraphrase — never the word itself
+- `example`: one natural sentence using the word (the app blanks it out)
+- `pos`: noun / verb / adjective / adverb / phrase
+- `level`: "{level}"
+- Generate {count} words unless the user asked for a different number
+- Vary the parts of speech; prefer everyday, high-frequency words that a
+  {level} learner would actually meet in real life
+- Keep everything in US English; no rare idioms or slang
+"""
+
+GENERATION_GUIDES: dict[str, str] = {
+    "a1": _GUIDE_TEMPLATE.format(
+        level="a1",
+        level_label="A1",
+        learner="total beginner — knows the alphabet, numbers, and greetings only.",
+        words="concrete everyday things: objects, people, food, animals, colors,"
+        " simple actions (eat, go, read), basic adjectives (big, happy).",
+        definitions="one short clause, max 6 words, using ONLY simpler A1 words.",
+        examples="one simple sentence, max 7 words, present simple, no subordinate"
+        " clauses. Example: 'The cat is sleeping.'",
+        count="8",
+    ),
+    "a2": _GUIDE_TEMPLATE.format(
+        level="a2",
+        level_label="A2",
+        learner="elementary — can handle everyday situations: travel, shopping, work, family.",
+        words="everyday topics plus common verbs and adjectives (decide, borrow,"
+        " expensive, careful) and basic abstract nouns (weather, weekend).",
+        definitions="max 8 words, using A1-A2 vocabulary.",
+        examples="one sentence, max 10 words, past/present/future simple or"
+        " present continuous. Example: 'We buy fruit at the market.'",
+        count="8",
+    ),
+    "b1": _GUIDE_TEMPLATE.format(
+        level="b1",
+        level_label="B1",
+        learner="intermediate — can discuss work, school, travel, opinions, and experiences.",
+        words="useful abstract and semi-formal words (opportunity, improve,"
+        " responsible, environment) plus phrasal verbs and collocations.",
+        definitions="max 10 words, clear and concrete, using A1-B1 vocabulary.",
+        examples="one natural sentence, max 12 words, with a modal, passive,"
+        " or a single subordinate clause. Example: 'This job requires patience.'",
+        count="10",
+    ),
+    "b2": _GUIDE_TEMPLATE.format(
+        level="b2",
+        level_label="B2",
+        learner="upper-intermediate — can handle abstract topics, nuance, and"
+        " professional language.",
+        words="nuanced, academic, and professional words (significant, negotiate,"
+        " sustainable, scrutinize) — but still in everyday use.",
+        definitions="max 12 words, precise enough to distinguish near-synonyms.",
+        examples="one sentence, max 14 words, with varied structures — conditionals,"
+        " relative clauses, or reported speech. Example: 'The internet transformed"
+        " communication.'",
+        count="10",
+    ),
+}

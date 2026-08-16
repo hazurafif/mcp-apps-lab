@@ -151,37 +151,103 @@ _BUILDERS = {
 }
 
 
-def _build_item(entry: dict, index: int) -> dict:
-    exercise = _BUILDERS[EXERCISE_TYPES[index % len(EXERCISE_TYPES)]](entry)
-    base = {
+def _base_item(entry: dict) -> dict:
+    """Fields every exercise carries, regardless of type."""
+    return {
         "word": entry["word"],
         "pos": entry["pos"],
         "level": entry["level"],
         "definition": entry["definition"],
         "example": entry["example"],
     }
-    return {**base, **exercise}
 
 
-def build_lesson(level: str = "auto", items: int = 6, db_path: Path | str | None = None) -> dict:
+def _build_item(entry: dict, index: int) -> dict:
+    exercise = _BUILDERS[EXERCISE_TYPES[index % len(EXERCISE_TYPES)]](entry)
+    return {**_base_item(entry), **exercise}
+
+
+def _ingest_words(store: Store, words: list, fallback_level: str) -> list[dict]:
+    """Validate + persist LLM-supplied words; returns bank entries.
+
+    Entries missing a word or definition are skipped. Every valid word is
+    added to the bank (``source='ai'``) so it gets an FSRS card and can be
+    served again in later review sessions.
+    """
+    entries: list[dict] = []
+    for w in words:
+        if not isinstance(w, dict):
+            continue
+        word = str(w.get("word", "")).strip().lower()
+        definition = str(w.get("definition", "")).strip()
+        if not word or not definition:
+            continue
+        store.add_word(
+            word,
+            definition,
+            str(w.get("example", "")).strip(),
+            str(w.get("pos", "")).strip(),
+            str(w.get("level", fallback_level)).strip().lower(),
+        )
+        entry = store.get_word(word)
+        if entry:
+            entries.append(entry)
+    return entries
+
+
+def build_lesson(
+    level: str = "auto",
+    items: int = 6,
+    db_path: Path | str | None = None,
+    flip_only: bool = False,
+    words: list | None = None,
+) -> dict:
     """Build a lesson: due reviews first, then new words at the level.
 
-    Returns ``{"items": [...], "profile": {...}}`` for the UI. Exercise
-    types cycle mc -> fill -> type -> order -> flip.
+    ``words`` (LLM-generated vocabulary) overrides the word bank: valid
+    entries are persisted, exercises are built from them, and ``source``
+    is ``"ai"`` (``"bank"`` otherwise). Exercise types cycle
+    mc -> fill -> type -> order -> flip, or ``flip_only=True`` builds a
+    pure flashcards deck.
     """
     store = Store(db_path)
     items = max(3, min(int(items), 10))
     level = (level or "auto").lower()
-    if level not in LEVELS:
-        level = store.level_with_most_due() if store.due_words(1) else store.earliest_unseen_level()
+    source = "bank"
+    entries: list[dict] = []
 
-    picked = store.due_words(items)
-    if len(picked) < items:
-        picked += store.unseen_words(level, items - len(picked))
+    if words:
+        entries = _ingest_words(store, words, level)
+        if entries:
+            source = "ai"
+            level = entries[0]["level"]
 
-    entries = [store.get_word(w) for w in picked]
-    items_out = [_build_item(e, i) for i, e in enumerate(entries) if e]
-    return {"items": items_out, "profile": store.get_profile()}
+    if not entries:
+        explicit = level in LEVELS
+        if not explicit:
+            level = (
+                store.level_with_most_due()
+                if store.due_words(1)
+                else store.earliest_unseen_level()
+            )
+
+        # An explicit level is honored strictly: due reviews at THAT level
+        # first, then unseen words at that level — never other levels.
+        picked = store.due_words(items, level=level if explicit else None)
+        if len(picked) < items:
+            picked += store.unseen_words(level, items - len(picked))
+        entries = [e for w in picked if (e := store.get_word(w))]
+
+    if flip_only:
+        items_out = [{**_base_item(e), **_build_flip(e)} for e in entries]
+    else:
+        items_out = [_build_item(e, i) for i, e in enumerate(entries)]
+    return {
+        "items": items_out,
+        "profile": store.get_profile(),
+        "level": level,
+        "source": source,
+    }
 
 
 # ---------------------------------------------------------------- grading

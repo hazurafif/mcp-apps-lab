@@ -61,7 +61,7 @@ async def test_server_hides_disabled_tools(tmp_path, monkeypatch) -> None:
     )
     server = build_server()
     names = {t.name for t in await server.list_tools()}
-    assert names == {"news_curator", "duo_english"}
+    assert names == {"news_curator", "duo_english", "duo_flashcards"}
 
 
 def test_repo_config_disables_quiz_and_weather() -> None:
