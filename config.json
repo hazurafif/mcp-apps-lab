@@ -1,0 +1,8 @@
+{
+  "tools": {
+    "take_quiz": false,
+    "weather_app": false,
+    "news_curator": true,
+    "duo_english": true
+  }
+}

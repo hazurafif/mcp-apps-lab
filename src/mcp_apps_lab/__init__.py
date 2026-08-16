@@ -9,6 +9,7 @@ Server layout:
 - ``prompts/``       — MCP prompt templates (``morning-briefing``, ``daily-english``)
 - ``data/``          — shared static data behind tools, apps, and resources
 - ``duo/``           — the English Duo engine (word bank, FSRS scheduler, game mechanics)
+- ``config.py``      — tool enable/disable config (``config.json``)
 """
 
 from mcp_apps_lab.server import mcp

@@ -50,6 +50,30 @@ src/mcp_apps_lab/
 uv sync          # installs the package (editable) + fastmcp[apps] + dev tools
 ```
 
+## Configuring which tools are enabled
+
+`config.json` at the repo root decides which UI apps (tools) the server
+advertises to the LLM. Disabled apps are not registered at all — their
+backend tools stay hidden too.
+
+```json
+{
+  "tools": {
+    "take_quiz": false,
+    "weather_app": false,
+    "news_curator": true,
+    "duo_english": true
+  }
+}
+```
+
+- Keys: `take_quiz`, `weather_app`, `news_curator`, `duo_english`.
+- Missing keys default to **enabled**; unknown keys are ignored.
+- Lookup order: `MCP_APPS_LAB_CONFIG` env var → `./config.json` →
+  `~/.mcp-apps-lab/config.json`.
+- The checked-in config currently runs with **quiz and weather disabled**
+  (English Duo + News Curator active); flip the booleans to re-enable.
+
 ## Running
 
 ### Plain streamable-HTTP server
@@ -79,6 +103,9 @@ State lives in a SQLite database (`~/.mcp-apps-lab/duo.db`, override with
 
 - **Word bank** — 120 CEFR-graded words (A1-B2) with simple definitions and
   example sentences; the assistant can add more via the `add_word` tool.
+- **Duolingo brand UI** — Nunito typeface, Duolingo palette (green `#58CC02`,
+  blue `#1CB0F6`, yellow `#FFC800`, red `#FF4B4B`), rounded cards, 3D-press
+  buttons, and green/red feedback banners — distinct from the generic quiz UI.
 - **Spaced repetition** — one FSRS-6 card per word (`fsrs` package, the
   algorithm modern Anki uses). Correct → *Good*, wrong → *Again*; due
   reviews are served first in every lesson, new words fill the rest.
@@ -114,8 +141,8 @@ streams a structured tool event the frontend renders as the interactive app.
 ## How it's structured
 
 ```python
-# server.py — one server, four apps as providers, plus resources & prompts
-mcp = FastMCP("mcp-apps-lab", providers=[quiz_app, weather_app, news_app, duo_app])
+# server.py — one server, apps filtered by config.json, plus resources & prompts
+mcp = build_server()   # providers = apps enabled in config.json
 register_resources(mcp)   # news://{source}/feed, weather://{city}/current, duo://profile, ...
 register_prompts(mcp)     # morning-briefing, daily-english
 
