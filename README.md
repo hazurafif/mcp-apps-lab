@@ -112,9 +112,16 @@ State lives in a SQLite database (`~/.mcp-apps-lab/duo.db`, override with
 - **Game mechanics** — 10 XP per correct answer + combo bonus (capped),
   ❤️ 5 hearts (a mistake costs one; refill daily), 🔥 streak (once per day
   per completed lesson), levels 1-10 with Bronze→Diamond leagues.
-- **Exercise types** — “What does X mean?” (multiple choice) and
-  fill-in-the-blank with the example sentence; distractors are seeded by
-  word, so each exercise is stable and free of duplicates.
+- **Exercise types** — five, cycling through each lesson so it never
+  feels like one quiz:
+  - `mc` — “What does X mean?” multiple choice
+  - `fill` — pick the word that fits a sentence blank
+  - `type` — TYPE the missing word (no choices at all)
+  - `order` — build the sentence by tapping scrambled word tiles
+    (with a clear/undo button)
+  - `flip` — flashcard: flip the card, then self-rate Again / Hard /
+    Good / Easy — mapped straight onto the FSRS ratings, so reviews get
+    a real difficulty signal and XP (0/8/10/12) instead of just right/wrong
 - **Resources/prompts** — `duo://profile` and `duo://due` give the
   assistant live stats; the `daily-english` prompt wires it into a daily
   practice routine.

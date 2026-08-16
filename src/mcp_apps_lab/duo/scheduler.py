@@ -21,8 +21,15 @@ MAX_INTERVAL_DAYS = 365
 DESIRED_RETENTION = 0.9
 
 
-def review_card(card_json: str | None, correct: bool) -> tuple[str, str, float]:
+def review_card(
+    card_json: str | None,
+    correct: bool,
+    rating: int | None = None,
+) -> tuple[str, str, float]:
     """Review a card (existing JSON state or a fresh card).
+
+    ``correct`` maps to Good/Again; pass ``rating`` (1-4 FSRS rating) to
+    override, e.g. for flip-card self-ratings (Again/Hard/Good/Easy).
 
     Returns ``(card_json, due_iso, interval_days)`` where ``due_iso`` is the
     UTC ISO timestamp of the next review.
@@ -32,8 +39,11 @@ def review_card(card_json: str | None, correct: bool) -> tuple[str, str, float]:
         maximum_interval=MAX_INTERVAL_DAYS,
     )
     card = Card.from_json(card_json) if card_json else Card()
-    rating = RATING_CORRECT if correct else RATING_WRONG
-    card, log = scheduler.review_card(card, rating)
+    if rating is not None:
+        card, log = scheduler.review_card(card, Rating(rating))
+    else:
+        rating = RATING_CORRECT if correct else RATING_WRONG
+        card, log = scheduler.review_card(card, rating)
     interval = (card.due - log.review_datetime).total_seconds() / 86400.0
     return card.to_json(), card.due.isoformat(), round(interval, 2)
 

@@ -21,16 +21,17 @@ LEVEL_THRESHOLDS = (0, 50, 120, 220, 360, 550, 800, 1120, 1520, 2000)
 _LEAGUES = {1: "Bronze", 2: "Silver", 3: "Gold", 4: "Platinum", 5: "Diamond"}
 
 
-def xp_for(correct: bool, combo: int) -> int:
-    """XP gained for an answer: 10 base + combo bonus when correct.
+def xp_for(correct: bool, combo: int, base: int = BASE_XP) -> int:
+    """XP gained for an answer: base + combo bonus when correct.
 
     combo is the number of *consecutive* correct answers INCLUDING this one;
-    the bonus starts on the second (combo 1 = plain base XP).
+    the bonus starts on the second (combo 1 = plain base XP). Flip-card
+    self-ratings pass a custom base (Hard=8, Good=10, Easy=12).
     """
     if not correct:
         return 0
     bonus = min(max(0, combo - 1) * COMBO_BONUS, COMBO_BONUS_CAP)
-    return BASE_XP + bonus
+    return base + bonus
 
 
 def level_for(xp: int) -> tuple[int, int, int]:

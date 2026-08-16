@@ -108,27 +108,41 @@ def test_default_db_path_uses_env(tmp_path, monkeypatch) -> None:
 
 
 def test_build_lesson_generates_valid_exercises(tmp_path) -> None:
-    lesson = engine.build_lesson("auto", 6, tmp_path / "duo.db")
-    assert len(lesson["items"]) == 6
+    lesson = engine.build_lesson("auto", 10, tmp_path / "duo.db")
+    assert len(lesson["items"]) == 10
     profile = lesson["profile"]
     assert profile["streak"] == 0 and profile["hearts"] == 5
+    types = [i["type"] for i in lesson["items"]]
+    assert types == ["mc", "fill", "type", "order", "flip", "mc", "fill", "type", "order", "flip"]
     for _i, item in enumerate(lesson["items"]):
-        assert len(item["options"]) == 4
-        assert len(set(item["options"])) == 4  # no duplicate options
-        assert item["correct"] in range(4)
-        assert item["type"] in ("mc", "fill")
         assert any(w["word"] == item["word"] for w in WORD_BANK)  # seeded
-        if item["type"] == "fill":
+        if item["type"] in ("mc", "fill"):
+            assert len(item["options"]) == 4
+            assert len(set(item["options"])) == 4  # no duplicate options
+            assert item["correct"] in range(4)
+            if item["type"] == "fill":
+                assert "____" in item["prompt"]
+            else:
+                assert item["word"] in item["prompt"]
+        elif item["type"] == "type":
             assert "____" in item["prompt"]
-        else:
-            assert item["word"] in item["prompt"]
+            assert "Definition:" in item["hint"]
+            assert item["correct"] == item["word"]
+        elif item["type"] == "order":
+            assert len(item["tiles"]) >= 3
+            assert sorted(w.lower() for w in item["tiles"]) == sorted(
+                w.lower() for w in item["target"]
+            )
+            assert item["target"] != item["tiles"]  # actually scrambled
+        elif item["type"] == "flip":
+            assert item["definition"] and item["example"]
 
 
 def test_grade_answer_correct_updates_xp_and_schedule(tmp_path) -> None:
     db = tmp_path / "duo.db"
     item = engine.build_lesson("a1", 3, db)["items"][0]
     result = engine.grade_answer(
-        item["word"], item["correct"], item["correct"], combo=0, finished=True, db_path=db
+        item["word"], "mc", item["correct"], item["correct"], combo=0, finished=True, db_path=db
     )
     assert result["is_correct"] is True
     assert result["xp_gain"] == 10
@@ -149,7 +163,7 @@ def test_grade_answer_wrong_loses_heart(tmp_path) -> None:
     item = engine.build_lesson("a1", 3, db)["items"][0]
     wrong = (item["correct"] + 1) % 4
     result = engine.grade_answer(
-        item["word"], wrong, item["correct"], combo=2, finished=True, db_path=db
+        item["word"], "mc", wrong, item["correct"], combo=2, finished=True, db_path=db
     )
     assert result["is_correct"] is False
     assert result["xp_gain"] == 0
@@ -167,7 +181,9 @@ def test_game_over_when_hearts_depleted(tmp_path) -> None:
         store._set(conn, "hearts", "1")
     item = engine.build_lesson("a1", 3, db)["items"][0]
     wrong = (item["correct"] + 1) % 4
-    result = engine.grade_answer(item["word"], wrong, item["correct"], finished=False, db_path=db)
+    result = engine.grade_answer(
+        item["word"], "mc", wrong, item["correct"], finished=False, db_path=db
+    )
     assert result["game_over"] is True
     assert result["finished"] is True
     assert result["hearts"] == 0
@@ -179,7 +195,7 @@ def test_lesson_driven_by_due_reviews(tmp_path) -> None:
     db = tmp_path / "duo.db"
     first = engine.build_lesson("a1", 6, db)["items"][0]
     engine.grade_answer(
-        first["word"], first["correct"], first["correct"], finished=True, db_path=db
+        first["word"], "mc", first["correct"], first["correct"], finished=True, db_path=db
     )
     second = engine.build_lesson("auto", 6, db)
     # the just-reviewed word is no longer due -> not in the new lesson
@@ -197,13 +213,91 @@ def test_add_word_then_appears_in_lesson(tmp_path) -> None:
     # work through the seeded b2 words until the new word is introduced
     for _ in range(3):
         for item in first:
-            engine.grade_answer(
-                item["word"], item["correct"], item["correct"], finished=True, db_path=db
-            )
+            if item["type"] in ("mc", "fill"):
+                engine.grade_answer(
+                    item["word"],
+                    item["type"],
+                    item["correct"],
+                    item["correct"],
+                    finished=True,
+                    db_path=db,
+                )
+            elif item["type"] == "type":
+                engine.grade_answer(
+                    item["word"], "type", item["word"], item["word"], finished=True, db_path=db
+                )
+            elif item["type"] == "order":
+                engine.grade_answer(
+                    item["word"],
+                    "order",
+                    " ".join(item["target"]),
+                    item["target"],
+                    finished=True,
+                    db_path=db,
+                )
+            else:  # flip
+                engine.grade_answer(item["word"], "flip", rating=3, finished=True, db_path=db)
         first = engine.build_lesson("b2", 10, db)["items"]
         if any(i["word"] == "grok" for i in first):
             break
     assert any(i["word"] == "grok" for i in first)
+
+
+def test_grade_answer_type_exercise(tmp_path) -> None:
+    """Typing: normalized text comparison, no options involved."""
+    db = tmp_path / "duo.db"
+    item = engine.build_lesson("a1", 10, db)["items"][2]  # type exercise
+    assert item["type"] == "type"
+    right = engine.grade_answer(
+        item["word"], "type", f"  {item['word'].upper()}  ", item["word"], finished=True, db_path=db
+    )
+    assert right["is_correct"] is True
+    assert right["xp_gain"] == 10
+    wrong = engine.grade_answer(
+        item["word"], "type", "banana", item["word"], finished=True, db_path=db
+    )
+    assert wrong["is_correct"] is False
+    assert wrong["hearts"] == 4
+
+
+def test_grade_answer_order_exercise(tmp_path) -> None:
+    """Sentence builder: the built sequence must match the target words."""
+    db = tmp_path / "duo.db"
+    item = engine.build_lesson("a1", 10, db)["items"][3]  # order exercise
+    assert item["type"] == "order"
+    built = " ".join(item["target"])
+    right = engine.grade_answer(
+        item["word"], "order", built, item["target"], finished=True, db_path=db
+    )
+    assert right["is_correct"] is True
+    scrambled = " ".join(reversed(item["target"]))
+    wrong = engine.grade_answer(
+        item["word"], "order", scrambled, item["target"], finished=True, db_path=db
+    )
+    assert wrong["is_correct"] is False
+
+
+def test_grade_answer_flip_ratings(tmp_path) -> None:
+    """Flip-card self-ratings map onto FSRS 1-4 with graded XP and hearts."""
+    db = tmp_path / "duo.db"
+    item = engine.build_lesson("a1", 10, db)["items"][4]  # flip exercise
+    assert item["type"] == "flip"
+    # Again = forgot: no XP, loses a heart
+    again = engine.grade_answer(item["word"], "flip", rating=1, finished=True, db_path=db)
+    assert again["is_correct"] is False
+    assert again["xp_gain"] == 0
+    assert again["hearts"] == 4
+    # Easy = remembered well: 12 XP base + combo bonus
+    easy = engine.grade_answer(item["word"], "flip", rating=4, combo=0, finished=True, db_path=db)
+    assert easy["is_correct"] is True
+    assert easy["xp_gain"] == 12
+    # the FSRS card got the exact rating 4: Easy on a fresh card graduates
+    # it straight to Review (a Good would still be in Learning steps)
+    card = Store(db).get_card(item["word"])
+    assert card["state"] == "Review"
+    hard = engine.grade_answer(item["word"], "flip", rating=2, finished=True, db_path=db)
+    assert hard["is_correct"] is True
+    assert hard["xp_gain"] == 8
 
 
 def test_profile_json_round_trip(tmp_path) -> None:

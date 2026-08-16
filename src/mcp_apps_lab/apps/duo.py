@@ -3,15 +3,18 @@
 The LLM-facing entry point is ``duo_english``: it builds a lesson from the
 FSRS due queue + new CEFR-graded words (backend: ``mcp_apps_lab.duo``) and
 renders interactive exercises in Duolingo's brand look (green/blue/yellow,
-Nunito typeface, 3D press buttons). Each answer calls ``grade_answer``
-(hashed backend tool) which grades, reschedules the word's FSRS card, and
-applies the game mechanics — XP + combo, hearts, daily streak, level ladder.
+Nunito typeface, 3D press buttons). Five exercise types cycle through each
+lesson, so it is never just a multiple-choice quiz:
 
-Lesson flow:
-1. Dashboard shows streak / hearts / XP / level progress.
-2. Exercises one at a time: "What does X mean?" (MC) or fill-in-the-blank.
-3. Instant feedback banner + the example sentence; wrong answers cost a heart.
-4. Summary card (or "out of hearts") with a SendMessage back to the chat.
+- ``mc``    — pick the definition of a word
+- ``fill``  — pick the word that fits a sentence blank
+- ``type``  — TYPE the missing word (no choices at all)
+- ``order`` — build the sentence by tapping scrambled word tiles
+- ``flip``  — flashcard: flip, then self-rate Again/Hard/Good/Easy
+
+Each answer calls ``grade_answer`` (hashed backend tool) which grades,
+reschedules the word's FSRS card, and applies the game mechanics — XP +
+combo, hearts, daily streak, level ladder.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from prefab_ui.components import (
     Column,
     Heading,
     If,
+    Input,
     Muted,
     Progress,
     Row,
@@ -102,6 +106,55 @@ DUO_THEME = Theme(
 
 _CTA_CLASS = "w-full font-extrabold rounded-2xl shadow-[0_4px_0_#58A700]"
 _OPTION_CLASS = "w-full justify-start text-left font-bold rounded-2xl py-3"
+_TILE_CLASS = "font-extrabold rounded-2xl px-4 py-2"
+_CHECK_CLASS = "flex-1 font-extrabold rounded-2xl shadow-[0_4px_0_#58A700]"
+
+
+_TYPE_LABELS = {
+    "mc": "Multiple choice",
+    "fill": "Fill the blank",
+    "type": "Type it",
+    "order": "Sentence",
+    "flip": "Flashcard",
+}
+
+
+def _grade_actions(item: dict, i: int, total: int, extra: dict) -> CallTool:
+    """A grade_answer tool call with the shared on_success state sync."""
+    is_last = (i + 1) >= total
+    return CallTool(
+        grade_answer,
+        arguments={
+            "word": item["word"],
+            "exercise_type": item["type"],
+            "combo": str(Rx("combo")),
+            "lesson_xp": str(Rx("lesson_xp")),
+            "lesson_correct": str(Rx("lesson_correct")),
+            "finished": is_last,
+            **extra,
+        },
+        on_success=[
+            SetState("answered", True),
+            SetState("last_correct", RESULT.is_correct),
+            SetState("xp", RESULT.xp_total),
+            SetState("xp_gain", RESULT.xp_gain),
+            SetState("combo", RESULT.combo),
+            SetState("hearts", RESULT.hearts),
+            SetState("level", RESULT.level),
+            SetState("league", RESULT.league),
+            SetState("level_xp", RESULT.level_xp),
+            SetState("next_xp", RESULT.next_xp),
+            SetState("streak", RESULT.streak),
+            SetState("lesson_xp", RESULT.lesson_xp),
+            SetState("lesson_correct", RESULT.lesson_correct),
+            SetState("finished", RESULT.finished),
+            SetState("game_over", RESULT.game_over),
+        ],
+        on_error=ShowToast(ERROR, variant="error"),
+    )
+
+
+_TOTAL = 1  # replaced below; avoids referencing the loop variable in helpers
 
 
 @app.ui()
@@ -112,8 +165,9 @@ def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
       with the most due reviews, or the first level with unseen words.
     - items: exercises per lesson (3-10).
 
-    Exercises mix due FSRS reviews with new words; each answer updates the
-    word's schedule, XP (+combo bonus), and hearts (5, refill daily).
+    Exercise types cycle mc → fill → type → order → flip; each answer
+    updates the word's FSRS schedule, XP (+combo bonus), and hearts (5,
+    refill daily).
     """
     lesson = build_lesson(level, items)
     lesson_items = lesson["items"]
@@ -167,12 +221,11 @@ def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
                     "All words are scheduled. Ask the assistant to add new "
                     "words, or come back when reviews are due."
                 )
-            return PrefabApp(view=view, state=_initial_state(p, 0), theme=DUO_THEME)
+            return PrefabApp(view=view, state=_initial_state(p, lesson_items), theme=DUO_THEME)
 
         # ------------------------------------------------------ exercises
         for i, item in enumerate(lesson_items):
             visible = index == i
-            is_last = (i + 1) >= total
 
             with If(visible), Card(), Column(gap=4, css_class="p-4"):
                 with Row(align="center", gap=3):
@@ -181,72 +234,171 @@ def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
                         css_class="text-sm font-bold text-muted-foreground",
                     )
                     Badge(item["level"].upper(), variant="outline")
-                    Badge(item["pos"], variant="ghost", css_class="text-xs")
+                    Badge(_TYPE_LABELS[item["type"]], variant="ghost", css_class="text-xs")
                     with If(combo >= 2):
                         Badge(f"Combo x{combo}", variant="warning")
 
-                Heading(item["prompt"], level=3, css_class="font-extrabold")
+                # ---- multiple choice / fill-the-blank: pick an option
+                if item["type"] in ("mc", "fill"):
+                    Heading(item["prompt"], level=3, css_class="font-extrabold")
+                    with If(~answered), Column(gap=2):
+                        for opt_idx, option in enumerate(item["options"]):
+                            Button(
+                                option,
+                                variant="outline",
+                                css_class=_OPTION_CLASS,
+                                on_click=_grade_actions(
+                                    item,
+                                    i,
+                                    total,
+                                    {"selected": opt_idx, "correct": item["correct"]},
+                                ),
+                            )
+                    with If(answered), Column(gap=3):
+                        for opt_idx, option in enumerate(item["options"]):
+                            if opt_idx == item["correct"]:
+                                Button(
+                                    option,
+                                    variant="success",
+                                    css_class=_OPTION_CLASS,
+                                    disabled=True,
+                                )
+                            else:
+                                Button(
+                                    option,
+                                    variant="ghost",
+                                    css_class=f"{_OPTION_CLASS} opacity-50",
+                                    disabled=True,
+                                )
 
-                with If(~answered), Column(gap=2):
-                    for opt_idx, option in enumerate(item["options"]):
+                # ---- type the word: a real input, no choices
+                elif item["type"] == "type":
+                    Heading(item["prompt"], level=3, css_class="font-extrabold")
+                    Muted(item["hint"])
+                    with If(~answered), Column(gap=3):
+                        Input(
+                            name=f"typed_{i}",
+                            placeholder="Type the word…",
+                            css_class="w-full font-bold rounded-2xl px-4 py-3",
+                        )
                         Button(
-                            option,
-                            variant="outline",
-                            css_class=_OPTION_CLASS,
-                            on_click=CallTool(
-                                grade_answer,
-                                arguments={
-                                    "word": item["word"],
-                                    "selected": opt_idx,
-                                    "correct": item["correct"],
-                                    "combo": str(combo),
-                                    "lesson_xp": str(Rx("lesson_xp")),
-                                    "lesson_correct": str(Rx("lesson_correct")),
-                                    "finished": is_last,
-                                },
-                                on_success=[
-                                    SetState("answered", True),
-                                    SetState("last_correct", RESULT.is_correct),
-                                    SetState("xp", RESULT.xp_total),
-                                    SetState("xp_gain", RESULT.xp_gain),
-                                    SetState("combo", RESULT.combo),
-                                    SetState("hearts", RESULT.hearts),
-                                    SetState("level", RESULT.level),
-                                    SetState("league", RESULT.league),
-                                    SetState("level_xp", RESULT.level_xp),
-                                    SetState("next_xp", RESULT.next_xp),
-                                    SetState("streak", RESULT.streak),
-                                    SetState("lesson_xp", RESULT.lesson_xp),
-                                    SetState("lesson_correct", RESULT.lesson_correct),
-                                    SetState("finished", RESULT.finished),
-                                    SetState("game_over", RESULT.game_over),
-                                ],
-                                on_error=ShowToast(ERROR, variant="error"),
+                            "Check",
+                            variant="default",
+                            css_class=_CHECK_CLASS,
+                            on_click=_grade_actions(
+                                item,
+                                i,
+                                total,
+                                {"selected": str(Rx(f"typed_{i}")), "correct": item["word"]},
                             ),
                         )
 
-                with If(answered), Column(gap=3):
-                    for opt_idx, option in enumerate(item["options"]):
-                        if opt_idx == item["correct"]:
+                # ---- sentence builder: tap scrambled word tiles in order
+                elif item["type"] == "order":
+                    Heading(item["prompt"], level=3, css_class="font-extrabold")
+                    with If(~answered), Column(gap=3):
+                        with Column(
+                            gap=1,
+                            css_class="min-h-14 justify-center rounded-2xl border-2 border-[#E5E5E5] bg-[#F7F7F7] px-4 py-3",
+                        ):
+                            with If(Rx(f"answer_{i}") == ""):
+                                Muted("Tap the words in order")
+                            with If(Rx(f"answer_{i}") != ""):
+                                Text(Rx(f"answer_{i}"), css_class="font-bold text-lg")
+                        with Row(gap=2, wrap=True):
+                            for j, tile_word in enumerate(item["tiles"]):
+                                Button(
+                                    tile_word,
+                                    variant="outline",
+                                    disabled=Rx(f"used_{i}_{j}"),
+                                    css_class=_TILE_CLASS,
+                                    on_click=[
+                                        SetState(f"used_{i}_{j}", True),
+                                        SetState(
+                                            f"answer_{i}", Rx(f"answer_{i}") + " " + tile_word
+                                        ),
+                                    ],
+                                )
+                        with Row(gap=2):
                             Button(
-                                option,
-                                variant="success",
-                                css_class=_OPTION_CLASS,
-                                disabled=True,
-                            )
-                        else:
-                            Button(
-                                option,
+                                "Clear",
                                 variant="ghost",
-                                css_class=f"{_OPTION_CLASS} opacity-50",
-                                disabled=True,
+                                css_class="font-bold rounded-2xl",
+                                on_click=[
+                                    SetState(f"answer_{i}", ""),
+                                    *[
+                                        SetState(f"used_{i}_{j}", False)
+                                        for j in range(len(item["tiles"]))
+                                    ],
+                                ],
                             )
+                            Button(
+                                "Check",
+                                variant="default",
+                                css_class=_CHECK_CLASS,
+                                on_click=_grade_actions(
+                                    item,
+                                    i,
+                                    total,
+                                    {"selected": str(Rx(f"answer_{i}")), "correct": item["target"]},
+                                ),
+                            )
+
+                # ---- flashcard: flip, then self-rate (FSRS 1-4)
+                elif item["type"] == "flip":
+                    with (
+                        If(~Rx(f"flipped_{i}") & ~answered),
+                        Column(gap=3, css_class="items-center text-center"),
+                    ):
+                        Heading(item["word"], level=2, css_class="font-extrabold text-3xl")
+                        Muted("Do you remember what this means?")
+                        Button(
+                            "Flip card",
+                            variant="default",
+                            css_class=_CTA_CLASS,
+                            on_click=SetState(f"flipped_{i}", True),
+                        )
+                    with If(Rx(f"flipped_{i}") & ~answered), Column(gap=3):
+                        with Card(css_class="bg-[#F7F7F7]"), Column(gap=2, css_class="p-4"):
+                            Heading(item["definition"], level=4)
+                            Muted(f"📖 {item['example']}")
+                        Muted("How well did you know it?")
+                        with Row(gap=2):
+                            Button(
+                                "Again",
+                                variant="destructive",
+                                css_class=_TILE_CLASS,
+                                on_click=_grade_actions(item, i, total, {"rating": 1}),
+                            )
+                            Button(
+                                "Hard",
+                                variant="warning",
+                                css_class=_TILE_CLASS,
+                                on_click=_grade_actions(item, i, total, {"rating": 2}),
+                            )
+                            Button(
+                                "Good",
+                                variant="default",
+                                css_class=_TILE_CLASS,
+                                on_click=_grade_actions(item, i, total, {"rating": 3}),
+                            )
+                            Button(
+                                "Easy",
+                                variant="success",
+                                css_class=_TILE_CLASS,
+                                on_click=_grade_actions(item, i, total, {"rating": 4}),
+                            )
+
+                # ---- reveal + feedback (all types)
+                with If(answered), Column(gap=3):
                     with If(Rx("last_correct")), Alert(variant="success"):
                         AlertTitle(f"Correct! +{Rx('xp_gain')} XP")
                         AlertDescription(f"“{item['word']}” — {item['definition']}")
                     with If(~Rx("last_correct")), Alert(variant="destructive"):
                         AlertTitle(f"Not quite — “{item['word']}” means: {item['definition']}")
                         AlertDescription(item["example"])
+                    if item["type"] == "order":
+                        Muted(f"💡 {item['example']}")
 
         # ------------------------------------------------------ next / end
         with If(answered & ~Rx("finished") & ~Rx("game_over")):
@@ -310,12 +462,12 @@ def duo_english(level: str = "auto", items: int = 6) -> PrefabApp:
                 ),
             )
 
-    return PrefabApp(view=view, state=_initial_state(p, total), theme=DUO_THEME)
+    return PrefabApp(view=view, state=_initial_state(p, lesson_items), theme=DUO_THEME)
 
 
-def _initial_state(profile: dict, total: int) -> dict:
-    """UI state seeded from the lesson's profile snapshot."""
-    return {
+def _initial_state(profile: dict, lesson_items: list[dict]) -> dict:
+    """UI state seeded from the lesson's profile snapshot + per-exercise keys."""
+    state = {
         "index": 0,
         "answered": False,
         "last_correct": False,
@@ -330,6 +482,16 @@ def _initial_state(profile: dict, total: int) -> dict:
         "streak": profile["streak"],
         "lesson_xp": 0,
         "lesson_correct": 0,
-        "finished": total == 0,
+        "finished": len(lesson_items) == 0,
         "game_over": False,
     }
+    for i, item in enumerate(lesson_items):
+        if item["type"] == "type":
+            state[f"typed_{i}"] = ""
+        elif item["type"] == "order":
+            state[f"answer_{i}"] = ""
+            for j in range(len(item["tiles"])):
+                state[f"used_{i}_{j}"] = False
+        elif item["type"] == "flip":
+            state[f"flipped_{i}"] = False
+    return state
