@@ -2,13 +2,14 @@
 
 A single ``FastMCP`` instance exposes:
 
-- **Three Prefab UI apps** (via ``providers``): ``take_quiz``, ``weather_app``,
-  and ``news_curator`` — the only tools advertised to the LLM.
+- **Four Prefab UI apps** (via ``providers``): ``take_quiz``, ``weather_app``,
+  ``news_curator``, and ``duo_english`` — the only tools advertised to the LLM.
 - **Backend tools** owned by each app (``tools/``) — called by the UIs over
   the tool proxy under hashed names; never listed to the LLM.
 - **MCP resources** (``resources/``) — ``news://{source}/feed``,
-  ``news://{source}/briefing``, ``weather://{city}/current``.
-- **MCP prompts** (``prompts/``) — ``morning-briefing``.
+  ``news://{source}/briefing``, ``weather://{city}/current``,
+  ``duo://profile``, ``duo://due``.
+- **MCP prompts** (``prompts/``) — ``morning-briefing``, ``daily-english``.
 
 Run with:
 
@@ -20,11 +21,11 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from mcp_apps_lab.apps import news_app, quiz_app, weather_app
+from mcp_apps_lab.apps import duo_app, news_app, quiz_app, weather_app
 from mcp_apps_lab.prompts import register_prompts
 from mcp_apps_lab.resources import register_resources
 
-mcp = FastMCP("mcp-apps-lab", providers=[quiz_app, weather_app, news_app])
+mcp = FastMCP("mcp-apps-lab", providers=[quiz_app, weather_app, news_app, duo_app])
 
 register_resources(mcp)
 register_prompts(mcp)

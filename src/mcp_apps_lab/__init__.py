@@ -1,13 +1,14 @@
-"""mcp-apps-lab — one MCP server hosting three interactive Prefab apps.
+"""mcp-apps-lab — one MCP server hosting four interactive Prefab apps.
 
 Server layout:
 
 - ``server.py``      — the single ``FastMCP`` server wiring everything together
 - ``apps/``          — the ``FastMCPApp`` UIs (LLM-facing entry points)
 - ``tools/``         — backend tool functions the UIs call via the tool proxy
-- ``resources/``     — MCP resources over the shared data (``news://``, ``weather://``)
-- ``prompts/``       — MCP prompt templates (``morning-briefing``)
+- ``resources/``     — MCP resources over the shared data (``news://``, ``weather://``, ``duo://``)
+- ``prompts/``       — MCP prompt templates (``morning-briefing``, ``daily-english``)
 - ``data/``          — shared static data behind tools, apps, and resources
+- ``duo/``           — the English Duo engine (word bank, FSRS scheduler, game mechanics)
 """
 
 from mcp_apps_lab.server import mcp

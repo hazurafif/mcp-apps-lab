@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastmcp[apps]>=3.4.0",
+    "fsrs>=6.3.0",
 ]
 
 [project.scripts]

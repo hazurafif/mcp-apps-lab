@@ -8,7 +8,8 @@ import pytest
 from fastmcp.server.providers.addressing import hash_tool
 
 from mcp_apps_lab import mcp
-from mcp_apps_lab.apps import news_app, quiz_app, weather_app
+from mcp_apps_lab.apps import duo_app, news_app, quiz_app, weather_app
+from mcp_apps_lab.apps.duo import duo_english
 from mcp_apps_lab.apps.news import news_curator
 from mcp_apps_lab.apps.quiz import take_quiz
 from mcp_apps_lab.apps.weather import weather_app as weather_ui
@@ -21,19 +22,37 @@ def _text(result) -> str:
 
 @pytest.mark.asyncio
 async def test_llm_facing_tools() -> None:
-    """The three UI entry points are the only tools advertised to the LLM."""
+    """The four UI entry points are the only tools advertised to the LLM."""
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
-    assert {"take_quiz", "weather_app", "news_curator"} <= names
+    assert {"take_quiz", "weather_app", "news_curator", "duo_english"} <= names
     # Backend tools must NOT leak to the LLM.
-    assert not names & {"submit_answer", "get_weather", "get_feed"}
+    assert not names & {
+        "submit_answer",
+        "get_weather",
+        "get_feed",
+        "grade_answer",
+        "get_profile",
+        "add_word",
+    }
 
 
 @pytest.mark.asyncio
 async def test_backend_tools_via_hash() -> None:
     """UIs call their backend tools under hashed names; the server routes them."""
     cases = [
-        (quiz_app, "submit_answer", {"question_index": 0, "selected": 2, "correct": 2, "total_questions": 5, "current_score": 0}),
+        (duo_app, "get_profile", {}),
+        (
+            quiz_app,
+            "submit_answer",
+            {
+                "question_index": 0,
+                "selected": 2,
+                "correct": 2,
+                "total_questions": 5,
+                "current_score": 0,
+            },
+        ),
         (weather_app, "get_weather", {"city": "tokyo"}),
         (news_app, "get_feed", {"source": "bbc", "topic": "Energy"}),
     ]
@@ -72,8 +91,54 @@ async def test_weather_any_city_resolves_live() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resources() -> None:
-    """news:// and weather:// resources resolve through the server."""
+async def test_duo_backend_tools_via_hash(tmp_path, monkeypatch) -> None:
+    """duo backend tools route under hashed names against a temp DB."""
+    monkeypatch.setenv("DUO_DB_PATH", str(tmp_path / "duo.db"))
+    lesson = build_lesson_for_test(tmp_path)
+
+    digest = hash_tool(duo_app.name, "grade_answer")
+    result = await mcp.call_tool(
+        f"{digest}_grade_answer",
+        {
+            "word": lesson["word"],
+            "selected": lesson["correct"],
+            "correct": lesson["correct"],
+            "finished": True,
+        },
+    )
+    assert not result.is_error
+    data = json.loads(_text(result))
+    assert data["is_correct"] is True
+    assert data["xp_gain"] == 10
+    assert data["streak"] == 1
+
+    profile = json.loads(
+        _text(await mcp.call_tool(f"{hash_tool(duo_app.name, 'get_profile')}_get_profile", {}))
+    )
+    assert profile["xp"] == 10 and profile["hearts"] == 5
+
+    added = json.loads(
+        _text(
+            await mcp.call_tool(
+                f"{hash_tool(duo_app.name, 'add_word')}_add_word",
+                {"word": "meld", "definition": "to combine together"},
+            )
+        )
+    )
+    assert added["added"] is True
+
+
+def build_lesson_for_test(tmp_path) -> dict:
+    """Build a fresh lesson against the temp DB (sync helper)."""
+    from mcp_apps_lab.duo import engine
+
+    return engine.build_lesson("a1", 3, tmp_path / "duo.db")["items"][0]
+
+
+@pytest.mark.asyncio
+async def test_resources(tmp_path, monkeypatch) -> None:
+    """news://, weather://, and duo:// resources resolve through the server."""
+    monkeypatch.setenv("DUO_DB_PATH", str(tmp_path / "duo.db"))
     feed = await mcp.read_resource("news://bloomberg/feed")
     stories = json.loads(_text(feed))
     assert stories and stories[0]["headline"]
@@ -84,19 +149,27 @@ async def test_resources() -> None:
     weather = await mcp.read_resource("weather://paris/current")
     assert json.loads(_text(weather))["city"] == "paris"
 
+    duo = await mcp.read_resource("duo://profile")
+    assert json.loads(_text(duo))["xp"] == 0
+
 
 @pytest.mark.asyncio
 async def test_prompts() -> None:
     prompts = await mcp.list_prompts()
     assert any(p.name == "morning-briefing" for p in prompts)
+    assert any(p.name == "daily-english" for p in prompts)
     prompt = await mcp.get_prompt("morning-briefing")
     rendered = await prompt._render(arguments={"topic": "AI & Tech"})
     assert rendered.messages and rendered.messages[0].content.text
+    duo_prompt = await mcp.get_prompt("daily-english")
+    duo_rendered = await duo_prompt._render(arguments={"level": "b1"})
+    assert "duo_english" in duo_rendered.messages[0].content.text
 
 
 @pytest.mark.asyncio
-async def test_ui_serialization(monkeypatch) -> None:
+async def test_ui_serialization(monkeypatch, tmp_path) -> None:
     """Each UI entry point renders to JSON without errors (offline-safe)."""
+    monkeypatch.setenv("DUO_DB_PATH", str(tmp_path / "duo.db"))
     import mcp_apps_lab.tools.news as news_tools
     import mcp_apps_lab.tools.weather as weather_tools
 
@@ -109,6 +182,7 @@ async def test_ui_serialization(monkeypatch) -> None:
         (take_quiz, {"topic": "Python"}),
         (weather_ui, {"city": "berlin"}),
         (news_curator, {"topic": "Global Markets"}),
+        (duo_english, {"level": "a1"}),
     ]:
         app = ui(**kwargs)
         data = app.to_json()
@@ -125,7 +199,7 @@ def test_weather_ui_has_location_input_and_forecast(monkeypatch) -> None:
     monkeypatch.setattr(weather_tools, "_fetch_json", _offline)
     data = weather_ui(city="jakarta").to_json()
     serialized = json.dumps(data)
-    assert "Input" in serialized or "\"type\": \"Input\"" in serialized
+    assert "Input" in serialized or '"type": "Input"' in serialized
     assert "Prakiraan 5 Hari" in serialized
 
 

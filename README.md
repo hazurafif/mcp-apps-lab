@@ -1,7 +1,8 @@
 # mcp-apps-lab
 
-One **FastMCP app server** (Python) — a single MCP server that hosts three
-interactive Prefab apps (quiz, weather, news) plus MCP resources and prompts.
+One **FastMCP app server** (Python) — a single MCP server that hosts four
+interactive Prefab apps (quiz, weather, news, English Duo) plus MCP
+resources and prompts.
 Each app tool returns a Prefab UI (buttons, cards, tabs, progress) instead of
 raw JSON; any MCP host renders them, and the LLM sees a text summary.
 
@@ -12,10 +13,11 @@ raw JSON; any MCP host renders them, and the LLM sees a text summary.
 | Quiz | `take_quiz` | `submit_answer` | Multi-turn state: the LLM generates questions, the user answers via buttons, each click grades through a backend tool, the final score is sent back to the conversation |
 | Weather | `weather_app` | `get_weather` | Live forecast from the Open-Meteo API: free-text location input geocodes ANY city name (no fixed table — “bekasi” works), shows current conditions with the city's local time (🕐 20:31 WIB), region/country, and a 5-day forecast; unknown names fall back to Jakarta, sample data offline (LIVE/SAMPEL badge); lookups go through the host's tools/call proxy (hashed tool names — the proxy never sees the mapping) |
 | News Curator | `news_curator` | `get_feed` | Live RSS feeds (Bloomberg Markets, CNBC, The Guardian Business, BBC Business) fetched through the backend tool on tab click / refresh — parsed with the stdlib, sample-data fallback when offline (LIVE/SAMPLE badge); compiles a markdown briefing and sends it back to the conversation |
+| English Duo | `duo_english` | `grade_answer`, `get_profile`, `add_word` | A Duolingo-style English learning app: CEFR-graded vocabulary (A1-B2), FSRS-6 spaced-repetition cards per word, and game mechanics — XP + combo bonus, 5 hearts (mistakes cost one, daily refill), daily streak 🔥, and a Bronze→Diamond level ladder. Due reviews + new words drive each lesson; answers are graded by the backend tool which reschedules the word's card and updates the profile in SQLite |
 
 Also exposed server-side: live resources (`news://{source}/feed`,
-`news://{source}/briefing`, `weather://{city}/current`) and a prompt
-(`morning-briefing`).
+`news://{source}/briefing`, `weather://{city}/current`, `duo://profile`,
+`duo://due`) and prompts (`morning-briefing`, `daily-english`).
 
 ## Layout
 
@@ -25,14 +27,21 @@ src/mcp_apps_lab/
 ├── apps/              # the FastMCPApp UIs (LLM-facing entry points)
 │   ├── quiz.py        #   take_quiz UI
 │   ├── weather.py     #   weather_app UI
-│   └── news.py        #   news_curator UI
+│   ├── news.py        #   news_curator UI
+│   └── duo.py         #   duo_english UI (English Duo)
 ├── tools/             # backend tool functions the UIs call via the tool proxy
 │   ├── quiz.py        #   submit_answer
 │   ├── weather.py     #   get_weather
-│   └── news.py        #   get_feed (live RSS fetch + offline fallback)
-├── resources/         # MCP resources over the shared data (news:// live feeds, weather://)
-├── prompts/           # MCP prompt templates (morning-briefing)
-└── data/              # feed definitions + offline fallback data
+│   ├── news.py        #   get_feed (live RSS fetch + offline fallback)
+│   └── duo.py         #   grade_answer, get_profile, add_word
+├── duo/               # the English Duo engine
+│   ├── store.py       #   SQLite persistence (~/.mcp-apps-lab/duo.db)
+│   ├── scheduler.py   #   FSRS-6 spaced-repetition wrapper
+│   ├── game.py        #   XP/combo, hearts, streak, level ladder
+│   └── engine.py      #   lesson building + grading orchestration
+├── resources/         # MCP resources (news://, weather://, duo://profile, duo://due)
+├── prompts/           # MCP prompt templates (morning-briefing, daily-english)
+└── data/              # feed definitions, offline fallback data, word bank
 ```
 
 ## Setup
@@ -57,10 +66,31 @@ uv run fastmcp dev apps src/mcp_apps_lab/server.py --mcp-port 8090
 ```
 
 - MCP server: `http://127.0.0.1:8090/mcp` (auto-reload on save)
-- Dev UI: `http://localhost:8080` — pick `take_quiz`, `weather_app`, or
-  `news_curator`, fill in arguments, and play the rendered app in a new tab
+- Dev UI: `http://localhost:8080` — pick `take_quiz`, `weather_app`,
+  `news_curator`, or `duo_english`, fill in arguments, and play the
+  rendered app in a new tab
 - The left inspector panel shows the JSON-RPC traffic (including the hashed
   backend-tool calls the UIs make)
+
+## English Duo details
+
+State lives in a SQLite database (`~/.mcp-apps-lab/duo.db`, override with
+`DUO_DB_PATH`):
+
+- **Word bank** — 120 CEFR-graded words (A1-B2) with simple definitions and
+  example sentences; the assistant can add more via the `add_word` tool.
+- **Spaced repetition** — one FSRS-6 card per word (`fsrs` package, the
+  algorithm modern Anki uses). Correct → *Good*, wrong → *Again*; due
+  reviews are served first in every lesson, new words fill the rest.
+- **Game mechanics** — 10 XP per correct answer + combo bonus (capped),
+  ❤️ 5 hearts (a mistake costs one; refill daily), 🔥 streak (once per day
+  per completed lesson), levels 1-10 with Bronze→Diamond leagues.
+- **Exercise types** — “What does X mean?” (multiple choice) and
+  fill-in-the-blank with the example sentence; distractors are seeded by
+  word, so each exercise is stable and free of duplicates.
+- **Resources/prompts** — `duo://profile` and `duo://due` give the
+  assistant live stats; the `daily-english` prompt wires it into a daily
+  practice routine.
 
 ## Wiring into the ai-backend-lab agent
 
@@ -77,17 +107,17 @@ and prompt:
 ```
 
 Then ask the agent something like *"give me a quiz about Python"*, *"show me
-the weather in Tokyo"*, or *"curate today's financial news"* — it calls the
-UI tool, and the agent's reply streams a structured tool event the frontend
-renders as the interactive app.
+the weather in Tokyo"*, *"curate today's financial news"*, or *"let's do my
+daily English practice"* — it calls the UI tool, and the agent's reply
+streams a structured tool event the frontend renders as the interactive app.
 
 ## How it's structured
 
 ```python
-# server.py — one server, three apps as providers, plus resources & prompts
-mcp = FastMCP("mcp-apps-lab", providers=[quiz_app, weather_app, news_app])
-register_resources(mcp)   # news://{source}/feed, weather://{city}/current, ...
-register_prompts(mcp)     # morning-briefing
+# server.py — one server, four apps as providers, plus resources & prompts
+mcp = FastMCP("mcp-apps-lab", providers=[quiz_app, weather_app, news_app, duo_app])
+register_resources(mcp)   # news://{source}/feed, weather://{city}/current, duo://profile, ...
+register_prompts(mcp)     # morning-briefing, daily-english
 
 # apps/weather.py — the UI app owns its backend tool
 app = FastMCPApp("Weather")
